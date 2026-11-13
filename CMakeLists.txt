@@ -79,7 +79,9 @@ if(BUILD_TESTING)
     target_link_libraries(tst_video_compressor PRIVATE vc_core Qt6::Test)
     target_compile_definitions(tst_video_compressor PRIVATE SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     set_target_properties(tst_video_compressor PROPERTIES WIN32_EXECUTABLE FALSE MACOSX_BUNDLE FALSE)   # console output
-    add_test(NAME tst_video_compressor COMMAND tst_video_compressor)
+    # the results also go to a file: on Windows CTest doesn't show what the test program prints
+    add_test(NAME tst_video_compressor
+             COMMAND tst_video_compressor -o "${CMAKE_BINARY_DIR}/test-results.txt,txt" -o -,txt)
     get_target_property(_qmake Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(_qt_bin "${_qmake}" DIRECTORY)
     set_tests_properties(tst_video_compressor PROPERTIES

@@ -1061,11 +1061,20 @@ void TestVideoCompressor::playsTheEditedVideo()
     e.editsUpdated();
     e.seek(0);
     QVERIFY(QTest::qWaitFor([&] { return center().red() > 150; }, 10000));
+    QString seen;   // the colours shown while playing, each once in a row
+    const QMetaObject::Connection watch = QObject::connect(e.view_, &VideoView::frameShown, [&] {
+        const QColor c = center();
+        const QChar color = c.red() > 150 && c.green() < 100 ? 'r'
+                            : c.green() > 100 && c.red() < 100 && c.blue() < 100 ? 'g'
+                            : c.blue() > 150 && c.green() < 100 ? 'b' : '?';
+        if (color != '?' && !seen.endsWith(color))
+            seen += color;
+    });
     e.togglePlay();
-    QVERIFY(QTest::qWaitFor([&] { return e.playhead_ > 1.3; }, 15000));
-    QVERIFY2(center().blue() > 150 && center().green() < 100, qPrintable(center().name()));   // never green
-    QVERIFY(QTest::qWaitFor([&] { return e.player_->playbackState() != QMediaPlayer::PlayingState; }, 15000));
-    QCOMPARE(e.playhead_, 2.0);   // stopped at the end of the edited video
+    QVERIFY(QTest::qWaitFor([&] { return e.player_->playbackState() != QMediaPlayer::PlayingState; }, 20000));
+    QObject::disconnect(watch);
+    QCOMPARE(seen, QString("rb"));   // red, then blue: never the green part that was cut
+    QCOMPARE(e.playhead_, 2.0);      // stopped at the end of the edited video
     e.player_->setAudioOutput(e.audio_);
     w.tabs_->setCurrentIndex(0);
 }

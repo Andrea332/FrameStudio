@@ -89,6 +89,10 @@ def main():
     packages = [(package_name, MODULES)] + [(f"qt.qt6.{v}.addons.{addon}.{platform_name}", None) for addon in ADDONS]
     for name, modules in packages:
         install(repo, index, name, modules, prefix, version, folder)
+    # The app plays videos with Qt Multimedia's FFmpeg backend. On Linux there is also a GStreamer one, which
+    # needs GStreamer installed: the AppImage would have to carry it (linuxdeploy stops if it's missing).
+    for plugin in (prefix / "plugins" / "multimedia").glob("libgstreamermediaplugin*"):
+        plugin.unlink()
     print(prefix.as_posix())
 
 
