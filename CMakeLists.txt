@@ -5,12 +5,14 @@ project(VideoCompressor VERSION 2.4.0 DESCRIPTION "Compress videos with a previe
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Network OPTIONAL_COMPONENTS Svg)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Network Multimedia OPTIONAL_COMPONENTS Svg)
 qt_standard_project_setup()
 
 # Everything except main(), so that the tests can use it too
 add_library(vc_core STATIC
     src/codecs.cpp src/codecs.h
+    src/editlist.cpp src/editlist.h
+    src/editor.cpp src/editor.h
     src/encodercheck.cpp src/encodercheck.h
     src/mainwindow.cpp src/mainwindow.h
     src/media.cpp src/media.h
@@ -18,10 +20,12 @@ add_library(vc_core STATIC
     src/sizeestimator.cpp src/sizeestimator.h
     src/spinner.cpp src/spinner.h
     src/systeminfo.cpp src/systeminfo.h
+    src/timeline.cpp src/timeline.h
     src/updatechecker.cpp src/updatechecker.h
+    src/videoview.cpp src/videoview.h
 )
 target_include_directories(vc_core PUBLIC src)
-target_link_libraries(vc_core PUBLIC Qt6::Widgets Qt6::Network)
+target_link_libraries(vc_core PUBLIC Qt6::Widgets Qt6::Network Qt6::Multimedia)
 
 # Processor of the Windows build, in the package names (VideoCompressor-2.4.0-win64.exe or -win-arm64.exe):
 # the update check downloads the installer for the same one

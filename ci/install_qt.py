@@ -22,7 +22,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REPOSITORY = "https://download.qt.io/online/qtsdkrepository"
-MODULES = {"qtbase", "qtsvg", "qttools", "qttranslations", "qtwayland", "icu"}
+MODULES = {"qtbase", "qtsvg", "qttools", "qttranslations", "qtwayland", "icu"}   # in Qt's main package
+ADDONS = ["qtmultimedia"]   # packages of their own: qt.qt6.<version>.addons.<name>.<platform>
 
 
 def repository(version):
@@ -82,13 +83,22 @@ def main():
     version, destination = sys.argv[1], Path(sys.argv[2])
     repo, package_name, folder = repository(version)
     index = ET.fromstring(fetch(f"{repo}/Updates.xml"))
+    prefix = destination / version / folder
+    prefix.mkdir(parents=True, exist_ok=True)
+    v, platform_name = package_name.split(".")[2], package_name.split(".")[-1]
+    packages = [(package_name, MODULES)] + [(f"qt.qt6.{v}.addons.{addon}.{platform_name}", None) for addon in ADDONS]
+    for name, modules in packages:
+        install(repo, index, name, modules, prefix, version, folder)
+    print(prefix.as_posix())
+
+
+def install(repo, index, package_name, modules, prefix, version, folder):
+    """Installs the archives of a package (only those of the given modules, if any)."""
     package = next(p for p in index.iter("PackageUpdate") if p.findtext("Name") == package_name)
     package_version = package.findtext("Version")
     archives = [a.strip() for a in package.findtext("DownloadableArchives").split(",") if a.strip()]
-    prefix = destination / version / folder
-    prefix.mkdir(parents=True, exist_ok=True)
     for archive in archives:
-        if archive.split("-")[0] not in MODULES:
+        if modules is not None and archive.split("-")[0] not in modules:
             continue
         url = f"{repo}/{package_name}/{package_version}{archive}"
         data = fetch(url)
@@ -107,7 +117,6 @@ def main():
             target.mkdir(exist_ok=True)
             merge(source, target)
         print(f"{archive}: {len(data) // 1024 // 1024} MB, SHA-1 ok", file=sys.stderr)
-    print(prefix.as_posix())
 
 
 if __name__ == "__main__":

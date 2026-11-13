@@ -134,9 +134,12 @@ QString rateModeName(RateMode mode)
     return mode == RateMode::Vbr ? QStringLiteral("VBR") : mode == RateMode::Cbr ? QStringLiteral("CBR") : QString();
 }
 
-QStringList AudioCodec::args(int kbps) const
+QStringList AudioCodec::args(int kbps, bool withFilter) const
 {
-    return QStringList{"-c:a", encoder, "-b:a", QString::number(kbps) + "k"} + extra;
+    QStringList args{"-c:a", encoder, "-b:a", QString::number(kbps) + "k"};
+    if (withFilter && !filter.isEmpty())
+        args << "-af" << filter;
+    return args;
 }
 
 const std::vector<VideoCodec> &videoCodecs()
@@ -213,7 +216,7 @@ const std::vector<AudioCodec> &audioCodecs()
     static const std::vector<AudioCodec> list = {
         {"AAC", "aac", "aac", {}},
         // libopus only accepts the standard channel layouts: e.g. 5.1(side) becomes 5.1
-        {"Opus", "libopus", "opus", {"-af", "aformat=channel_layouts=mono|stereo|3.0|quad|5.0|5.1|6.1|7.1"}},
+        {"Opus", "libopus", "opus", "aformat=channel_layouts=mono|stereo|3.0|quad|5.0|5.1|6.1|7.1"},
         {"MP3", "libmp3lame", "mp3", {}},
         {"Vorbis", "libvorbis", "vorbis", {}},
     };

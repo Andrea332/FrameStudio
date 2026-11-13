@@ -2,13 +2,17 @@
 // Test videos are generated with FFmpeg at startup; GPU encoders are tested only if this PC has them.
 
 #include "codecs.h"
+#include "editlist.h"
+#include "editor.h"
 #include "encodercheck.h"
 #include "mainwindow.h"
 #include "media.h"
 #include "settings.h"
 #include "sizeestimator.h"
 #include "spinner.h"
+#include "timeline.h"
 #include "updatechecker.h"
+#include "videoview.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -23,6 +27,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMediaPlayer>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QProgressBar>
@@ -34,6 +39,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QStandardItemModel>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextDocument>
@@ -68,6 +74,13 @@ private slots:
     void scrollsOnShortScreens();
     void notifiesAboutUpdates();
     void keepsPortableSettingsNextToTheApp();
+    void editsAListOfPieces();
+    void editsWithKeysAndMouse();
+    void playsTheEditedVideo();
+    void compressesTheEditedVideo();
+    void estimatesTheEditedVideo();
+    void editsPhoneVideos();
+    void savesWithoutReencoding();
     void rendersWindow();
     // last: it kills FFmpeg in the middle of GPU encodes, and on the macOS CI machine (a virtual Mac) the
     // VideoToolbox encodes started after that sometimes never ended
@@ -85,6 +98,8 @@ private:
     QList<double> keyframeTimes(const QString &file);
     QList<int> nalTypes(const QString &file);
     QStringList hardwareVendors(const QString &family) const;
+    QString colorsAt(const QString &file, const QList<double> &times);
+    double durationOf(const QString &file);
 
     QTemporaryDir dir_;
     QString ffmpeg_;
@@ -117,7 +132,7 @@ bool TestVideoCompressor::settled() const
         return false;
     if (w.rateMode() != RateMode::Quality)
         return w.estBps_.has_value();   // computed from the bitrate, right away
-    return w.sizeDetail_->text().startsWith("⚠") || w.estCache_.contains(w.videoArgs().join(QChar(0x1F)));
+    return w.sizeDetail_->text().startsWith("⚠") || w.estCache_.contains(w.estimateKey());
 }
 
 QString TestVideoCompressor::compress(const QString &input, const QString &format, const QString &family,
@@ -191,6 +206,28 @@ QStringList TestVideoCompressor::hardwareVendors(const QString &family) const
     return list;
 }
 
+// The colour of the frames at these times: r, g, b (or ? for something else), e.g. "brg"
+QString TestVideoCompressor::colorsAt(const QString &file, const QList<double> &times)
+{
+    QString colors;
+    for (double t : times) {
+        const QByteArray rgb = run(ffmpeg_, {"-v", "error", "-ss", QString::number(t, 'f', 3), "-i", file, "-frames:v",
+                                             "1", "-vf", "scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"});
+        if (rgb.size() < 3) {
+            colors += '?';
+            continue;
+        }
+        const int r = quint8(rgb[0]), g = quint8(rgb[1]), b = quint8(rgb[2]);
+        colors += r > 150 && g < 100 && b < 100 ? 'r' : g > 80 && r < 100 && b < 100 ? 'g' : b > 150 && r < 100 && g < 100 ? 'b' : '?';
+    }
+    return colors;
+}
+
+double TestVideoCompressor::durationOf(const QString &file)
+{
+    return run(ffprobe_, {"-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file}).trimmed().toDouble();
+}
+
 QString plainText(const QString &html)
 {
     QTextDocument doc;
@@ -236,11 +273,23 @@ void TestVideoCompressor::initTestCase()
                                       "[0:v]loop=loop=-1:size=1,trim=duration=30,setpts=N/30/TB[bg];"
                                       "[bg][1:v]overlay=x='mod(t*80,1860)':y=500",
                                       "-c:v", "libx264", "-crf", "12", path("static.mp4")});
-    for (const char *name : {"input.mp4", "long.mp4", "20s.mp4", "rotated.mp4", "cover.mp4", "stress.mkv", "static.mp4"})
+    // 2 s red, 2 s green, 2 s blue, a keyframe every 0.5 s, with sound: for the Editor
+    run(ffmpeg_, common + QStringList{"-f", "lavfi", "-i", "color=red:s=320x240:r=30:d=2", "-f", "lavfi", "-i",
+                                      "color=green:s=320x240:r=30:d=2", "-f", "lavfi", "-i",
+                                      "color=blue:s=320x240:r=30:d=2", "-f", "lavfi", "-i", "sine=f=440:d=6",
+                                      "-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]", "-map", "[v]",
+                                      "-map", "3:a", "-c:v", "libx264", "-g", "15", "-keyint_min", "15",
+                                      "-sc_threshold", "0", "-c:a", "aac", "-shortest", path("colors.mp4")});
+    for (const char *name : {"input.mp4", "long.mp4", "20s.mp4", "rotated.mp4", "cover.mp4", "stress.mkv", "static.mp4",
+                             "colors.mp4"})
         QVERIFY2(QFile::exists(path(name)), qPrintable(QString(name) + " was not created"));
 
     win_ = std::make_unique<MainWindow>();
     win_->showMessage = [this](QMessageBox::Icon, const QString &title, const QString &) { messages_ << title; };
+    win_->askQuestion = [this](const QString &title, const QString &) {
+        messages_ << title;
+        return true;
+    };
     win_->show();
     QVERIFY(QTest::qWaitFor([this] { return !win_->encoders_->testing(); }, 30000));
     qInfo().noquote() << "Encoders:" << QStringList(win_->encoders_->available().values()).join(' ');
@@ -888,6 +937,262 @@ void TestVideoCompressor::survivesClosingWhileBusy()
     }
 }
 
+// ------------------------------------------------ editor
+void TestVideoCompressor::editsAListOfPieces()
+{
+    using Pieces = std::vector<Piece>;
+    EditList e(10);
+    QCOMPARE(e.duration(), 10.0);
+    QVERIFY(e.isWhole(10));
+    e.split(4);
+    QCOMPARE(e.pieces(), (Pieces{{0, 4}, {4, 10}}));
+    QVERIFY(e.isWhole(10));                                   // split, but still the whole video in order
+    QCOMPARE(e.joined(), (Pieces{{0, 10}}));
+    e.split(4);                                               // on a boundary: nothing
+    QCOMPARE(e.pieces().size(), size_t(2));
+
+    const Pieces cut = e.remove(2, 6);                        // across two pieces
+    QCOMPARE(cut, (Pieces{{2, 4}, {4, 6}}));
+    QCOMPARE(e.pieces(), (Pieces{{0, 2}, {6, 10}}));
+    QCOMPARE(e.duration(), 6.0);
+    QVERIFY(!e.isWhole(10));
+    e.insert(6, cut);                                         // pasted at the end
+    QCOMPARE(e.pieces(), (Pieces{{0, 2}, {6, 10}, {2, 4}, {4, 6}}));
+    QCOMPARE(e.joined(), (Pieces{{0, 2}, {6, 10}, {2, 6}}));
+    QCOMPARE(e.copy(1, 3), (Pieces{{1, 2}, {6, 7}}));         // copying changes nothing
+    QCOMPARE(e.duration(), 10.0);
+
+    const auto [index, source] = e.locate(7);                 // in the 3rd piece, 1 s after its start
+    QCOMPARE(index, 2);
+    QCOMPARE(source, 3.0);
+    QCOMPARE(e.pieceStart(2), 6.0);
+    QCOMPARE(e.locate(100).second, 6.0);                      // clamped to the end
+
+    EditList m(10);
+    QCOMPARE(m.move(8, 10, 0), 0.0);                          // the end to the start
+    QCOMPARE(m.pieces(), (Pieces{{8, 10}, {0, 8}}));
+    QCOMPARE(m.move(0, 2, 10), 8.0);                          // and back: the target moves left by its length
+    QCOMPARE(m.joined(), (Pieces{{0, 10}}));
+    QCOMPARE(m.move(2, 5, 3), 2.0);                           // into itself: nothing
+    QCOMPARE(m.joined(), (Pieces{{0, 10}}));
+}
+
+void TestVideoCompressor::editsWithKeysAndMouse()
+{
+    using Pieces = std::vector<Piece>;
+    MainWindow &w = *win_;
+    Editor &e = *w.editor_;
+    w.setInput(path("colors.mp4"));
+    w.tabs_->setCurrentWidget(&e);
+    w.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&w));
+    e.timeline_->setFocus();
+    QVERIFY(QTest::qWaitFor([&] { return e.timeline_->hasFocus(); }, 5000));
+    const auto key = [&](int k, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+        QTest::keyClick(e.timeline_, Qt::Key(k), modifiers);
+    };
+
+    e.seek(2);
+    key(Qt::Key_I);                                          // the selection starts here...
+    e.seek(4);
+    key(Qt::Key_O);                                          // ...and ends here
+    QCOMPARE(e.timeline_->selectionStart(), 2.0);
+    QCOMPARE(e.timeline_->selectionEnd(), 4.0);
+    key(Qt::Key_X, Qt::ControlModifier);                     // cut the green part
+    QCOMPARE(e.edits().pieces(), (Pieces{{0, 2}, {4, 6}}));
+    QVERIFY(!w.editNotice_->isHidden());   // in the Compress tab
+    QCOMPARE(w.outputDuration(), 4.0);
+    key(Qt::Key_End);
+    key(Qt::Key_V, Qt::ControlModifier);                     // pasted at the end
+    QCOMPARE(e.edits().pieces(), (Pieces{{0, 2}, {4, 6}, {2, 4}}));
+    key(Qt::Key_Z, Qt::ControlModifier);
+    QCOMPARE(e.edits().pieces(), (Pieces{{0, 2}, {4, 6}}));
+    key(Qt::Key_Z, Qt::ControlModifier);
+    QVERIFY(!e.edited());
+    QVERIFY(w.editNotice_->isHidden());
+    key(Qt::Key_Y, Qt::ControlModifier);
+    QCOMPARE(e.edits().pieces(), (Pieces{{0, 2}, {4, 6}}));
+
+    e.seek(1);
+    key(Qt::Key_S);                                          // split at the playhead
+    QCOMPARE(e.edits().pieces(), (Pieces{{0, 1}, {1, 2}, {4, 6}}));
+    key(Qt::Key_A, Qt::ControlModifier);
+    key(Qt::Key_Delete);                                     // everything: refused
+    QCOMPARE(e.edits().pieces().size(), size_t(3));
+    key(Qt::Key_Escape);
+    QVERIFY(!e.timeline_->hasSelection());
+
+    // drag the first piece (double-click selects it) after the last one
+    Timeline &t = *e.timeline_;
+    const auto x = [&](double time) { return int(8 + time * (t.width() - 16) / e.edits().duration()); };
+    QTest::mouseDClick(&t, Qt::LeftButton, Qt::NoModifier, QPoint(x(0.5), 40));
+    QCOMPARE(t.selectionStart(), 0.0);
+    QCOMPARE(t.selectionEnd(), 1.0);
+    QTest::mousePress(&t, Qt::LeftButton, Qt::NoModifier, QPoint(x(0.5), 40));
+    QMouseEvent move(QEvent::MouseMove, QPointF(x(4.0) - 1, 40), t.mapToGlobal(QPointF(x(4.0) - 1, 40)),
+                     Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&t, &move);
+    QTest::mouseRelease(&t, Qt::LeftButton, Qt::NoModifier, QPoint(x(4.0) - 1, 40));
+    QCOMPARE(e.edits().pieces(), (Pieces{{1, 2}, {4, 6}, {0, 1}}));
+    QCOMPARE(t.selectionStart(), 3.0);                       // the moved piece stays selected
+    key(Qt::Key_Z, Qt::ControlModifier);
+    QCOMPARE(e.edits().pieces(), (Pieces{{0, 1}, {1, 2}, {4, 6}}));
+    w.tabs_->setCurrentIndex(0);
+}
+
+// The player shows the frame at the playhead and, when playing, jumps over what was cut.
+void TestVideoCompressor::playsTheEditedVideo()
+{
+    MainWindow &w = *win_;
+    Editor &e = *w.editor_;
+    w.setInput(path("colors.mp4"));
+    w.tabs_->setCurrentWidget(&e);
+    e.player_->setAudioOutput(nullptr);   // the test machines may have no sound card
+    const auto center = [&] {
+        const QImage &f = e.view_->frame();
+        return f.isNull() ? QColor() : f.pixelColor(f.width() / 2, f.height() / 2);
+    };
+    e.seek(3);
+    if (!QTest::qWaitFor([&] { return !e.view_->frame().isNull(); }, 15000))
+        QSKIP(qPrintable("no video from Qt Multimedia here: " + e.player_->errorString()));
+    QVERIFY(QTest::qWaitFor([&] { return center().green() > 100 && center().red() < 100; }, 10000));
+
+    e.edits_.setPieces({{0, 1}, {4, 5}});   // 1 s red, then 1 s blue
+    e.editsUpdated();
+    e.seek(0);
+    QVERIFY(QTest::qWaitFor([&] { return center().red() > 150; }, 10000));
+    e.togglePlay();
+    QVERIFY(QTest::qWaitFor([&] { return e.playhead_ > 1.3; }, 15000));
+    QVERIFY2(center().blue() > 150 && center().green() < 100, qPrintable(center().name()));   // never green
+    QVERIFY(QTest::qWaitFor([&] { return e.player_->playbackState() != QMediaPlayer::PlayingState; }, 15000));
+    QCOMPARE(e.playhead_, 2.0);   // stopped at the end of the edited video
+    e.player_->setAudioOutput(e.audio_);
+    w.tabs_->setCurrentIndex(0);
+}
+
+// Moved, pasted and deleted parts end up in the compressed file, cut exactly on their frames.
+void TestVideoCompressor::compressesTheEditedVideo()
+{
+    MainWindow &w = *win_;
+    Editor &e = *w.editor_;
+    w.setInput(path("colors.mp4"));
+    e.seek(4);
+    e.setStart();                      // to the end: the blue part
+    e.cut();
+    e.seek(0);
+    e.paste();                         // blue, red, green
+    e.timeline_->setSelection(5.3, 6); // and 0.7 s less green, not on a keyframe
+    e.deleteSelection();
+    QCOMPARE(w.outputDuration(), 5.3);
+    for (const char *audio : {"aac", "opus"}) {   // Opus has its audio filter inside the filter graph
+        if (!w.encoders_->available().contains(audio == QString("aac") ? "aac" : "libopus"))
+            continue;
+        const QString format = audio == QString("aac") ? "mp4" : "mkv";
+        select(w.formatCombo_, format);
+        select(w.vcodecCombo_, "h264");
+        select(w.accelCombo_, "off");
+        select(w.acodecCombo_, audio);
+        const QString out = path("edited." + format);
+        QFile::remove(out);
+        w.outEdit_->setText(out);
+        w.start();
+        QVERIFY(QTest::qWaitFor([&] { return !w.encoding_; }, 120000));
+        QVERIFY2(w.log_->toPlainText().contains("Done!"), qPrintable(w.log_->toPlainText().right(500)));
+        QVERIFY2(std::abs(durationOf(out) - 5.3) < 0.1, qPrintable(QString::number(durationOf(out))));
+        QCOMPARE(colorsAt(out, {0.5, 1.95, 2.05, 3.9, 4.1, 5.2}), QString("bbrrgg"));
+        QCOMPARE(streams(out).size(), 2);   // video and sound
+    }
+    e.reset();
+    QVERIFY(!e.edited());
+}
+
+void TestVideoCompressor::estimatesTheEditedVideo()
+{
+    MainWindow &w = *win_;
+    w.setInput(path("long.mp4"));
+    select(w.formatCombo_, "mkv");
+    select(w.vcodecCombo_, "h264");
+    select(w.accelCombo_, "off");
+    select(w.acodecCombo_, QString());
+    w.editor_->edits_.setPieces({{25, 35}, {5, 15}});   // 20 s out of 40, in another order
+    w.editor_->editsUpdated();
+    bool exact = true;
+    QCOMPARE(w.estimateSamples(&exact).size(), 2);     // short enough: each piece is encoded whole
+    QVERIFY(!exact);
+    QVERIFY(QTest::qWaitFor([this] { return settled(); }, 300000));
+    const double estimate = w.estimatedBytes();
+    const QString out = path("edited-estimate.mkv");
+    QFile::remove(out);
+    w.outEdit_->setText(out);
+    w.start();
+    QVERIFY(QTest::qWaitFor([&] { return !w.encoding_; }, 300000));
+    const double real = double(QFileInfo(out).size());
+    qInfo().noquote() << QString("Edited video: estimate %1 KB, real %2 KB").arg(estimate / 1024, 0, 'f', 0)
+                             .arg(real / 1024, 0, 'f', 0);
+    QVERIFY(std::abs(estimate / real - 1) < 0.12);
+    w.editor_->reset();
+}
+
+// Phone videos, stored landscape with a rotation flag, stay upright when edited: in the player and in the file.
+void TestVideoCompressor::editsPhoneVideos()
+{
+    MainWindow &w = *win_;
+    Editor &e = *w.editor_;
+    w.setInput(path("rotated.mp4"));
+    w.tabs_->setCurrentWidget(&e);
+    e.player_->setAudioOutput(nullptr);
+    e.seek(1);
+    if (QTest::qWaitFor([&] { return !e.view_->frame().isNull(); }, 15000))
+        QVERIFY2(e.view_->frame().height() > e.view_->frame().width(),
+                 qPrintable(QString("%1x%2").arg(e.view_->frame().width()).arg(e.view_->frame().height())));
+    e.player_->setAudioOutput(e.audio_);
+    w.tabs_->setCurrentIndex(0);
+
+    e.edits_.setPieces({{4, 6}, {0, 2}});   // two pieces: joined by the concat filter
+    e.editsUpdated();
+    select(w.formatCombo_, "mp4");
+    select(w.vcodecCombo_, "h264");
+    select(w.accelCombo_, "off");
+    select(w.acodecCombo_, "aac");
+    select(w.resCombo_, 0);
+    const QString out = path("edited-phone.mp4");
+    QFile::remove(out);
+    w.outEdit_->setText(out);
+    w.start();
+    QVERIFY(QTest::qWaitFor([&] { return !w.encoding_; }, 120000));
+    QVERIFY2(w.log_->toPlainText().contains("Done!"), qPrintable(w.log_->toPlainText().right(500)));
+    const QJsonObject video = streams(out).first().toObject();
+    QCOMPARE(video.value("width").toInt(), 720);
+    QCOMPARE(video.value("height").toInt(), 1280);
+    e.reset();
+}
+
+// The copy without re-encoding: each piece starts on a keyframe (asking first if one moves earlier).
+void TestVideoCompressor::savesWithoutReencoding()
+{
+    MainWindow &w = *win_;
+    Editor &e = *w.editor_;
+    w.setInput(path("colors.mp4"));
+    QVERIFY(QTest::qWaitFor([&] { return e.keyframesReady(); }, 30000));
+    QCOMPARE(e.keyframes().size(), size_t(12));   // every 0.5 s
+    e.edits_.setPieces({{2, 4}, {0, 1.25}, {4.25, 6}});   // green, red, blue from 4.25 (not a keyframe)
+    e.editsUpdated();
+    messages_.clear();
+    const QString out = path("copy.mp4");
+    QFile::remove(out);
+    w.saveCopy(out);
+    QCOMPARE(messages_, QStringList{"Save without re-encoding"});   // the blue piece starts at 4.0 instead
+    QVERIFY(QTest::qWaitFor([&] { return !w.encoding_; }, 60000));
+    QVERIFY2(w.log_->toPlainText().contains("Done!"), qPrintable(w.log_->toPlainText().right(500)));
+    QCOMPARE(w.outcomeTitle_->text(), QString("Saved without re-encoding"));
+    QVERIFY2(std::abs(durationOf(out) - 5.25) < 0.15, qPrintable(QString::number(durationOf(out))));
+    QCOMPARE(colorsAt(out, {0.5, 1.9, 2.1, 3.1, 3.4, 5.0}), QString("ggrrbb"));
+    const QJsonArray s = streams(out);
+    QCOMPARE(s.size(), 2);
+    QCOMPARE(s[0].toObject().value("codec_name").toString(), QString("h264"));   // copied, not re-encoded
+    e.reset();
+}
+
 // Saves a screenshot to VC_SCREENSHOT_DIR, if set (use QT_QPA_FONTDIR=C:/Windows/Fonts to get text offscreen).
 // With VC_SCREENSHOT_VIDEO it is the README picture: that video, default settings, a fresh-looking window
 // (see the workflow, which runs it on Windows with the real platform plugin).
@@ -911,18 +1216,42 @@ void TestVideoCompressor::rendersWindow()
     }
     QVERIFY(QTest::qWaitFor([this] { return settled(); }, 300000));
     QVERIFY(QTest::qWaitFor([&] { return w.preview_->isVisible(); }, 30000));
-    QTest::qWait(200);   // the layout adapts to the texts just set
     // all of it, without the scroll bar, even if the screen is shorter (the CI machine's is): a minimum height
     // lets the window be taller than the screen
-    const int fullHeight = w.scroll_->widget()->heightForWidth(w.width());
-    w.setMinimumHeight(fullHeight);
-    w.resize(w.width(), fullHeight);
-    QTest::qWait(200);
-    const QPixmap shot = w.grab();
-    w.setMinimumHeight(0);
+    const auto grabAll = [&] {
+        QTest::qWait(200);   // the layout adapts to the texts just set
+        const int fullHeight = w.scroll_->widget()->heightForWidth(w.width());
+        w.setMinimumHeight(fullHeight);
+        w.resize(w.width(), fullHeight);
+        QTest::qWait(200);
+        const QPixmap shot = w.grab();
+        w.setMinimumHeight(0);
+        return shot;
+    };
+    const QPixmap shot = grabAll();
     QVERIFY(!shot.isNull());
-    if (const QString dir = qEnvironmentVariable("VC_SCREENSHOT_DIR"); !dir.isEmpty())
+    const QString dir = qEnvironmentVariable("VC_SCREENSHOT_DIR");
+    if (!dir.isEmpty())
         QVERIFY(shot.save(dir + "/window.png"));
+
+    // the Editor, with a part cut and one moved to the end (the second picture of the README)
+    Editor &e = *w.editor_;
+    w.tabs_->setCurrentWidget(&e);
+    const double d = w.media_->duration;
+    e.edits_.setPieces({{0, d * 0.3}, {d * 0.55, d}, {d * 0.3, d * 0.45}});
+    e.editsUpdated();
+    e.timeline_->setSelection(d * 0.75, d * 0.9);   // the moved part
+    e.updateActions();
+    e.seek(d * 0.8);
+    QVERIFY(QTest::qWaitFor([&] { return e.keyframesReady() && e.thumbQueue_.empty() && !e.thumbProc_; }, 120000));
+    if (!QTest::qWaitFor([&] { return !e.view_->frame().isNull(); }, 15000))
+        qInfo() << "No video frame from Qt Multimedia for the picture";
+    const QPixmap editorShot = grabAll();
+    QVERIFY(!editorShot.isNull());
+    if (!dir.isEmpty())
+        QVERIFY(editorShot.save(dir + "/editor.png"));
+    e.reset();
+    w.tabs_->setCurrentIndex(0);
 }
 
 int main(int argc, char *argv[])

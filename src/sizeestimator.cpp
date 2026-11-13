@@ -19,13 +19,13 @@ SizeEstimator::~SizeEstimator()
 }
 
 void SizeEstimator::start(const QString &path, const QList<QPair<double, double>> &segments,
-                          const QStringList &videoArgs, const QString &ext, int keyint)
+                          const QStringList &videoArgs, const QString &ext, int keyint, bool exact)
 {
     stop();
     tmpdir_ = std::make_unique<QTemporaryDir>(QDir::tempPath() + "/video_estimate_XXXXXX");
     totalBytes_ = 0;
     totalSecs_ = 0;
-    exact_ = segments.size() == 1 && segments[0].first == 0;
+    exact_ = exact;
     keyint_ = keyint;
     for (int i = 0; i < segments.size(); ++i) {
         const auto [start, length] = segments[i];

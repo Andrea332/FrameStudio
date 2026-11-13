@@ -53,7 +53,7 @@ std::optional<MediaInfo> probe(const QString &ffprobe, const QString &path, QStr
     QProcess proc;
     proc.start(ffprobe, {"-v", "error", "-show_entries",
                          "stream=index,codec_type,width,height,avg_frame_rate,r_frame_rate,duration:"
-                         "stream_disposition=attached_pic:stream_side_data=rotation:format=duration",
+                         "stream_disposition=attached_pic:stream_side_data=rotation:format=duration,start_time",
                          "-of", "json", path});
     if (!proc.waitForFinished(60000))
         return fail("ffprobe did not respond");
@@ -89,6 +89,7 @@ std::optional<MediaInfo> probe(const QString &ffprobe, const QString &path, QStr
         return fail("invalid duration");
 
     m.path = path;
+    m.startTime = info.value("format").toObject().value("start_time").toString().toDouble();
     m.width = video.value("width").toInt();
     m.height = video.value("height").toInt();
     // phone videos are often stored landscape with a rotation flag: use the size as displayed

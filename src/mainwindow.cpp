@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 
+#include "editor.h"
 #include "encodercheck.h"
 #include "settings.h"
 #include "sizeestimator.h"
@@ -39,6 +40,8 @@
 #include <QSpinBox>
 #include <QStandardItemModel>
 #include <QStandardPaths>
+#include <QTabWidget>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -146,6 +149,22 @@ const char *const RATE_TIPS[] = {
     "The size is bitrate × duration; the quality changes from scene to scene.",
 };
 
+// Puts the seek index at the start of the file, so players can jump anywhere right away (also when the file
+// is streamed or opened over the network).
+QStringList seekIndexArgs(const QString &ext)
+{
+    if (ext == "mp4" || ext == "mov" || ext == "m4v")
+        return {"-movflags", "+faststart"};
+    if (ext == "mkv" || ext == "webm")
+        return {"-cues_to_front", "1"};
+    return {};
+}
+
+QString number(double seconds)
+{
+    return QString::number(seconds, 'f', 6);
+}
+
 QString withSuffix(const QString &path, const QString &ext)
 {
     const QString suffix = QFileInfo(path).suffix();
@@ -182,6 +201,9 @@ MainWindow::MainWindow(QWidget *parent)
     showMessage = [this](QMessageBox::Icon icon, const QString &title, const QString &text) {
         QMessageBox box(icon, title, text, QMessageBox::Ok, this);
         box.exec();
+    };
+    askQuestion = [this](const QString &title, const QString &text) {
+        return QMessageBox::question(this, title, text) == QMessageBox::Yes;
     };
 
     encoders_ = new EncoderCheck(ffmpeg_, this);
@@ -423,10 +445,35 @@ MainWindow::MainWindow(QWidget *parent)
     cancelBtn_ = new QPushButton("Cancel");
     cancelBtn_->setEnabled(false);
     connect(cancelBtn_, &QPushButton::clicked, this, &MainWindow::cancel);
-    auto *btnRow = new QHBoxLayout;
-    btnRow->addWidget(startBtn_);
-    btnRow->addWidget(cancelBtn_);
-    btnRow->addStretch();
+    auto *startRow = new QHBoxLayout;
+    startRow->addWidget(startBtn_);
+    startRow->addStretch();
+    auto *progressRow = new QHBoxLayout;   // for compressing and for saving from the Editor
+    progressRow->addWidget(progress_, 1);
+    progressRow->addWidget(cancelBtn_);
+
+    // --- Tabs: Compress, Editor ---
+    editNotice_ = new QLabel;
+    editNotice_->setWordWrap(true);
+    editNotice_->setObjectName("editNotice");
+    editNotice_->setStyleSheet("#editNotice { background: rgba(37, 99, 235, 0.10); border: 1px solid "
+                               "rgba(37, 99, 235, 0.45); border-radius: 6px; padding: 6px; }");
+    editNotice_->hide();
+    auto *compressTab = new QWidget;
+    auto *compressLayout = new QVBoxLayout(compressTab);
+    compressLayout->addWidget(editNotice_);
+    compressLayout->addWidget(settingsBox_);
+    compressLayout->addWidget(previewBox);
+    compressLayout->addLayout(outRow);
+    compressLayout->addLayout(startRow);
+    compressLayout->addStretch();
+    editor_ = new Editor(ffmpeg_, ffprobe_);
+    connect(editor_, &Editor::editsChanged, this, &MainWindow::onEditsChanged);
+    connect(editor_, &Editor::saveCopyRequested, this, &MainWindow::pickCopyOutput);
+    tabs_ = new QTabWidget;
+    tabs_->addTab(compressTab, "Compress");
+    tabs_->addTab(editor_, "Editor");
+    connect(editNotice_, &QLabel::linkActivated, this, [this] { tabs_->setCurrentWidget(editor_); });
 
     // --- Result of the last compression, hard to miss (hidden until one ends) ---
     outcomeBar_ = new QFrame;
@@ -483,11 +530,8 @@ MainWindow::MainWindow(QWidget *parent)
     auto *layout = new QVBoxLayout(content);
     layout->addWidget(updateBar_);
     layout->addWidget(srcBox);
-    layout->addWidget(settingsBox_);
-    layout->addWidget(previewBox);
-    layout->addLayout(outRow);
-    layout->addWidget(progress_);
-    layout->addLayout(btnRow);
+    layout->addWidget(tabs_);
+    layout->addLayout(progressRow);
     layout->addWidget(outcomeBar_);
     layout->addWidget(log_);
     layout->addStretch();   // spare height, if any, at the bottom rather than inside the boxes
@@ -578,6 +622,7 @@ void MainWindow::setInput(const QString &path)
         media_.reset();
         spinner_->stop();
         outcomeBar_->hide();
+        editor_->setMedia(std::nullopt);
         loadPreview();
         settingsBox_->setEnabled(false);
         startBtn_->setEnabled(false);
@@ -620,6 +665,7 @@ void MainWindow::setInput(const QString &path)
     settingsBox_->setEnabled(true);
     openBtn_->setEnabled(false);
     outcomeBar_->hide();
+    editor_->setMedia(media_);   // nothing edited
     loadPreview();
     onSettingsChanged();
 }
@@ -905,11 +951,9 @@ void MainWindow::updateAudioWidgets()
     abitrateCombo_->setEnabled(hasAudio && !acodecCombo_->currentData().toString().isEmpty());
 }
 
-QStringList MainWindow::videoArgs() const
+QStringList MainWindow::videoFilters() const
 {
     const MediaInfo &m = *media_;
-    const VideoCodec &codec = *codec_;
-    const Format &f = fmt();
     QStringList filters;
     const int target = resCombo_->currentData().toInt();
     if (target)   // scale the short side, so it also works with vertical videos
@@ -919,17 +963,60 @@ QStringList MainWindow::videoArgs() const
     const int fps = fpsCombo_->currentData().toInt();
     if (fps)
         filters << QString("fps=%1").arg(fps);
-    QStringList args{"-map", QString("0:%1").arg(m.videoIndex)};
-    if (!filters.isEmpty())
-        args << "-vf" << filters.join(',');
+    return filters;
+}
+
+QStringList MainWindow::videoCodecArgs() const
+{
+    const MediaInfo &m = *media_;
+    const VideoCodec &codec = *codec_;
+    const Format &f = fmt();
     // same keyframe spacing in seconds for every encoder (their defaults go from 0.4 to 10 s)
+    const int fps = fpsCombo_->currentData().toInt();
     const double outFps = fps ? fps : (m.fps > 0 ? m.fps : 30.0);
     const int gopFrames = std::max(1, int(std::nearbyint(outFps * keyint())));
-    args += codec.args(rate(), speedCombo_->currentData().toString(), std::pair{gopFrames, keyint()});
+    QStringList args = codec.args(rate(), speedCombo_->currentData().toString(), std::pair{gopFrames, keyint()});
     if (codec.family == "hevc" && (f.ext == "mp4" || f.ext == "mov"))
         args << "-tag:v" << "hvc1";   // needed by Apple players
     else if (codec.family == "mpeg4" && f.ext == "avi")
         args << "-tag:v" << "XVID";   // recognized by old players
+    return args;
+}
+
+QStringList MainWindow::videoArgs() const
+{
+    QStringList args{"-map", QString("0:%1").arg(media_->videoIndex)};
+    const QStringList filters = videoFilters();
+    if (!filters.isEmpty())
+        args << "-vf" << filters.join(',');
+    return args + videoCodecArgs();
+}
+
+// More than one piece: one input each (decoding only that part of the source), joined by the concat filter,
+// then the video's own filters.
+QStringList MainWindow::concatArgs(int inputs, const AudioCodec *acodec, int kbps) const
+{
+    QString graph;
+    for (int i = 0; i < inputs; ++i) {
+        graph += QString("[%1:%2]").arg(i).arg(media_->videoIndex);
+        if (acodec)
+            graph += QString("[%1:a:0]").arg(i);
+    }
+    graph += QString("concat=n=%1:v=1:a=%2[v]").arg(inputs).arg(acodec ? 1 : 0);
+    if (acodec)
+        graph += "[a]";
+    QString video = "[v]", audio = "[a]";
+    if (const QStringList filters = videoFilters(); !filters.isEmpty()) {
+        graph += ";[v]" + filters.join(',') + "[vf]";
+        video = "[vf]";
+    }
+    if (acodec && !acodec->filter.isEmpty()) {   // -af can't be used on the output of a filter graph
+        graph += ";[a]" + acodec->filter + "[af]";
+        audio = "[af]";
+    }
+    QStringList args{"-filter_complex", graph, "-map", video};
+    args += videoCodecArgs();
+    args += acodec ? QStringList{"-map", audio} + acodec->args(kbps, false) : QStringList{"-an"};
     return args;
 }
 
@@ -975,36 +1062,91 @@ void MainWindow::onSettingsChanged()
     estTimer_->start();
 }
 
+// ------------------------------------------------ the edited video
+std::vector<Piece> MainWindow::outputPieces() const
+{
+    return media_ ? editor_->edits().joined() : std::vector<Piece>{};
+}
+
+double MainWindow::outputDuration() const
+{
+    return media_ ? editor_->edits().duration() : 0;
+}
+
+void MainWindow::onEditsChanged()
+{
+    if (media_ && editor_->edited()) {
+        const EditList &edits = editor_->edits();
+        editNotice_->setText(QString("✂ <b>Edited in the Editor</b>: %1 piece%2, %3 of %4. Only what is left "
+                                     "will be compressed. <a href=\"editor\">Show the Editor</a>")
+                                 .arg(edits.pieces().size())
+                                 .arg(edits.pieces().size() == 1 ? "" : "s")
+                                 .arg(fmtPrecise(edits.duration()), fmtPrecise(media_->duration)));
+        editNotice_->show();
+    } else {
+        editNotice_->hide();
+    }
+    onSettingsChanged();   // the size depends on what is left
+}
+
 // ------------------------------------------------ size estimate
+// Where the samples are taken (start, length in the source): spread over what will be in the file. A short
+// result is encoded whole; exact if it is one piece.
+QList<QPair<double, double>> MainWindow::estimateSamples(bool *exact) const
+{
+    const std::vector<Piece> pieces = outputPieces();
+    const double total = outputDuration();
+    QList<QPair<double, double>> samples;
+    *exact = total <= WHOLE_IF_SHORTER && pieces.size() == 1;
+    if (total <= WHOLE_IF_SHORTER) {
+        for (const Piece &p : pieces)
+            samples.append({p.start, p.length()});
+        return samples;
+    }
+    EditList output;
+    output.setPieces(pieces);
+    for (int i = 0; i < SAMPLE_COUNT; ++i) {
+        const auto [index, source] = output.locate(total * (i + 0.5) / SAMPLE_COUNT);
+        const Piece &piece = pieces[size_t(index)];
+        const double length = std::min(SAMPLE_LEN, piece.length());
+        samples.append({std::clamp(source - length / 2, piece.start, piece.end - length), length});
+    }
+    return samples;
+}
+
+// what an estimate depends on: the video settings and where the samples are
+QString MainWindow::estimateKey() const
+{
+    bool exact = false;
+    QStringList parts = videoArgs();
+    for (const auto &[start, length] : estimateSamples(&exact))
+        parts << number(start) << number(length);
+    return parts.join(QChar(0x1F));
+}
+
 void MainWindow::runEstimate()
 {
     if (!media_ || encoding_ || !codec_ || rateMode() != RateMode::Quality)
         return;
-    const double duration = media_->duration;
-    QList<QPair<double, double>> segments;
-    if (duration <= WHOLE_IF_SHORTER) {
-        segments.append({0.0, duration});
-    } else {
-        for (int i = 0; i < SAMPLE_COUNT; ++i)
-            segments.append({std::max(0.0, duration * (i + 0.5) / SAMPLE_COUNT - SAMPLE_LEN / 2), SAMPLE_LEN});
-    }
+    bool exact = false;
+    const QList<QPair<double, double>> segments = estimateSamples(&exact);
     const QStringList args = videoArgs();
-    const QString key = args.join(QChar(0x1F));
+    const QString key = estimateKey();
     if (estCache_.contains(key)) {
         pendingKey_.reset();
-        const auto [bps, exact] = estCache_.value(key);
-        onEstimateDone(bps, exact);
+        const auto [bps, cachedExact] = estCache_.value(key);
+        onEstimateDone(bps, cachedExact);
         return;
     }
     pendingKey_ = key;
     sizeDetail_->setText(fit_ ? "Searching for the best quality under the limit…"
                               : "Estimating (encoding a few short samples)…");
-    estimator_->start(media_->path, segments, args, fmt().ext, keyint());
+    estimator_->start(media_->path, segments, args, fmt().ext, keyint(), exact);
 }
 
 double MainWindow::estimatedBytes() const
 {
-    return (estBps_.value_or(0) + audioKbps() * 1000.0 / 8) * media_->duration * CONTAINER_OVERHEAD;
+    return (estBps_.value_or(0) + audioKbps() * 1000.0 / 8) * outputDuration() * CONTAINER_OVERHEAD;
 }
 
 void MainWindow::onEstimateDone(double bps, bool exact)
@@ -1076,14 +1218,14 @@ void MainWindow::fitToLimit()
     // GPU encoders can end up to ~10% above an average bitrate (CBR and software encoders: a few %)
     const double margin = rateMode() == RateMode::Vbr && codec_->hardware() ? GPU_VBR_LIMIT_MARGIN : LIMIT_MARGIN;
     const double target = limitSpin_->value() * MB * margin;
-    const double audioBytes = audioKbps() * 1000.0 / 8 * media_->duration * CONTAINER_OVERHEAD;
+    const double audioBytes = audioKbps() * 1000.0 / 8 * outputDuration() * CONTAINER_OVERHEAD;
     if (audioBytes >= target) {
         showMessage(QMessageBox::Information, "Limit too low",
                     "The audio alone already exceeds the limit: lower or remove it.");
         return;
     }
     if (rateMode() != RateMode::Quality) {
-        const double videoBytesPerSecond = (target - audioBytes) / (media_->duration * CONTAINER_OVERHEAD);
+        const double videoBytesPerSecond = (target - audioBytes) / (outputDuration() * CONTAINER_OVERHEAD);
         const int kbps = int(videoBytesPerSecond * 8 / 1000 / 10) * 10;
         if (kbps < MIN_VIDEO_KBPS) {
             showMessage(QMessageBox::Information, "Limit not reachable",
@@ -1206,26 +1348,25 @@ void MainWindow::start()
     spinner_->stop();
     const AudioCodec *acodec = audioCodec();
     const int kbps = audioKbps();
-    // put the seek index at the start of the file, so players can jump anywhere right away
-    // (also when the file is streamed or opened over the network)
-    QStringList index;
-    if (f.ext == "mp4" || f.ext == "mov")
-        index = {"-movflags", "+faststart"};
-    else if (f.ext == "mkv" || f.ext == "webm")
-        index = {"-cues_to_front", "1"};
-    QStringList args{"-y", "-hide_banner", "-nostats", "-progress", "pipe:1", "-i", input};
-    args += videoArgs();
-    args += acodec ? QStringList{"-map", "0:a:0"} + acodec->args(kbps) : QStringList{"-an"};
-    args += index;
+    // the edited video: each piece is an input that decodes only that part of the source
+    const std::vector<Piece> pieces = outputPieces();
+    QStringList args{"-y", "-hide_banner", "-nostats", "-progress", "pipe:1"};
+    if (!editor_->edited()) {
+        args << "-i" << input;
+    } else {
+        for (const Piece &piece : pieces)
+            args << "-ss" << number(piece.start) << "-t" << number(piece.length()) << "-i" << input;
+    }
+    if (pieces.size() <= 1) {
+        args += videoArgs();
+        args += acodec ? QStringList{"-map", "0:a:0"} + acodec->args(kbps) : QStringList{"-an"};
+    } else {
+        args += concatArgs(int(pieces.size()), acodec, kbps);
+    }
+    args += seekIndexArgs(f.ext);
     args << out;
 
-    cancelled_ = false;
-    currentOutput_ = out;
-    outBuf_.clear();
-    stderrTail_.clear();
-    progress_->setValue(0);
     log_->clear();
-    outcomeBar_->hide();
     const QString audio = acodec ? QString("%1 %2 kbps").arg(acodec->label).arg(kbps) : QString("no audio");
     const QString speed = codec_->speeds.isEmpty() ? QString() : " · " + speedCombo_->currentText().toLower();
     const QString rateText = rateMode() == RateMode::Quality
@@ -1235,6 +1376,104 @@ void MainWindow::start()
                               .arg(f.label, encoderSummary(), rateText, resCombo_->currentText(),
                                    fpsCombo_->currentText(), audio, speed)
                               .arg(keyint()));
+    if (editor_->edited())
+        log_->appendPlainText(QString("Edited: %1 pieces, %2").arg(pieces.size()).arg(fmtPrecise(outputDuration())));
+    runFfmpeg(args, out, outputDuration(), Job::Compress);
+}
+
+void MainWindow::pickCopyOutput()
+{
+    if (!media_ || encoding_)
+        return;
+    const QFileInfo source(media_->path);
+    const QString suggested = QDir(source.path()).filePath(source.completeBaseName() + "_edited." + source.suffix());
+    const QString out = QFileDialog::getSaveFileName(this, "Save without re-encoding", suggested,
+                                                     QString("%1 (*.%2)").arg(source.suffix().toUpper(), source.suffix()));
+    if (!out.isEmpty())
+        saveCopy(QDir::toNativeSeparators(out));
+}
+
+// Copies the edited video without re-encoding: FFmpeg's concat demuxer with an in and out point for each
+// piece. Decoding can only begin on a keyframe, so each piece starts at the keyframe at or before its start.
+void MainWindow::saveCopy(const QString &out)
+{
+    if (!media_ || encoding_ || !editor_->keyframesReady())
+        return;
+    if (samePath(media_->path, out)) {
+        showMessage(QMessageBox::Warning, "Error", "The output file must be different from the input file.");
+        return;
+    }
+    const std::vector<double> &keyframes = editor_->keyframes();
+    const double frame = 1 / std::max(1.0, media_->fps);
+    std::vector<Piece> pieces = outputPieces();
+    int moved = 0;
+    double earliest = 0;
+    for (Piece &piece : pieces) {
+        const auto after = std::upper_bound(keyframes.begin(), keyframes.end(), piece.start + 1e-3);
+        const double keyframe = after == keyframes.begin() ? 0.0 : *std::prev(after);
+        if (piece.start - keyframe > frame / 2) {
+            ++moved;
+            earliest = std::max(earliest, piece.start - keyframe);
+        }
+        piece.start = keyframe;
+    }
+    if (moved && !askQuestion("Save without re-encoding",
+                              QString("Without re-encoding, a piece can only start on a keyframe: %1 of the %2 "
+                                      "pieces will start earlier, by up to %3 s.\n\n"
+                                      "To cut exactly where you chose, use Compress. Save anyway?")
+                                  .arg(moved)
+                                  .arg(pieces.size())
+                                  .arg(earliest, 0, 'f', 2)))
+        return;
+
+    copyDir_ = std::make_unique<QTemporaryDir>(QDir::tempPath() + "/video_copy_XXXXXX");
+    const QString list = copyDir_->filePath("pieces.ffconcat");
+    QString text = "ffconcat version 1.0\n";
+    const QString file = "file '" + QDir::fromNativeSeparators(media_->path).replace("'", "'\\''") + "'\n";
+    // The demuxer works in the file's own timestamps and stops a piece at the out point in decoding order:
+    // with B-frames the first frame after the piece is decoded before its last frames are, so it stops at
+    // that frame's decoding time. The duration keeps the following pieces in place.
+    double duration = 0;
+    for (const Piece &piece : pieces) {
+        text += file;
+        text += QString("inpoint %1\n").arg(number(piece.start + media_->startTime));
+        if (piece.end < media_->duration - frame / 2)
+            text += QString("outpoint %1\n").arg(number(editor_->copyStop(piece.end) + media_->startTime));
+        text += QString("duration %1\n").arg(number(piece.length()));
+        duration += piece.length();
+    }
+    QFile listFile(list);
+    if (!listFile.open(QIODevice::WriteOnly) || listFile.write(text.toUtf8()) < 0) {
+        showMessage(QMessageBox::Critical, "Error", "Could not write a temporary file: " + listFile.errorString());
+        return;
+    }
+    listFile.close();
+
+    QStringList args{"-y", "-hide_banner", "-nostats", "-progress", "pipe:1", "-f", "concat", "-safe", "0",
+                     "-i", list, "-map", QString("0:%1").arg(media_->videoIndex)};
+    if (media_->hasAudio)
+        args << "-map" << "0:a:0";
+    args << "-c" << "copy" << "-avoid_negative_ts" << "make_zero";
+    args += seekIndexArgs(QFileInfo(out).suffix().toLower());
+    args << out;
+    log_->clear();
+    log_->appendPlainText(QString("Saving without re-encoding: %1 piece%2, %3")
+                              .arg(pieces.size())
+                              .arg(pieces.size() == 1 ? "" : "s")
+                              .arg(fmtPrecise(duration)));
+    runFfmpeg(args, out, duration, Job::Copy);
+}
+
+void MainWindow::runFfmpeg(const QStringList &args, const QString &out, double duration, Job job)
+{
+    job_ = job;
+    jobDuration_ = duration;
+    cancelled_ = false;
+    currentOutput_ = out;
+    outBuf_.clear();
+    stderrTail_.clear();
+    progress_->setValue(0);
+    outcomeBar_->hide();
     encodeClock_.start();
     setRunning(true);
     if (proc_)
@@ -1262,7 +1501,7 @@ void MainWindow::onStdout()
         bool ok = false;
         const qint64 value = line.section('=', 1).toLongLong(&ok);
         if (ok && value >= 0) {
-            const double frac = std::min(value / 1e6 / media_->duration, 1.0);
+            const double frac = std::min(value / 1e6 / std::max(jobDuration_, 0.001), 1.0);
             progress_->setValue(int(frac * 100));
         }
     }
@@ -1285,13 +1524,14 @@ void MainWindow::onFinished(int code, QProcess::ExitStatus status)
         log_->appendPlainText(stderrTail_.join('\n'));
         const QString reason = stderrTail_.isEmpty() ? QString("FFmpeg could not be started.")
                                                      : stderrTail_.last().trimmed();
-        showOutcome(Outcome::Failed, reason.toHtmlEscaped() + "<br>The log below has the details.");
+        showOutcome(Outcome::Failed, reason.toHtmlEscaped() + "<br>The log below has the details.",
+                    job_ == Job::Copy ? "Saving failed" : "");
         return;
     }
     progress_->setValue(100);
     const double size = double(QFileInfo(currentOutput_).size());
     QString msg = QString("Done! %1 → %2").arg(fmtMb(size), currentOutput_);
-    if (estBps_)
+    if (estBps_ && job_ == Job::Compress)
         msg += QString("\n(estimate was %1)").arg(fmtMb(estimatedBytes()));
     log_->appendPlainText(msg);
     openBtn_->setEnabled(true);
@@ -1305,7 +1545,9 @@ void MainWindow::onFinished(int code, QProcess::ExitStatus status)
                              .arg(QFileInfo(currentOutput_).fileName().toHtmlEscaped(),
                                   fmtMb(size).replace(' ', "&nbsp;"), change,
                                   fmtTime(encodeClock_.elapsed() / 1000.0));
-    if (size > limitSpin_->value() * MB) {
+    if (job_ == Job::Copy) {
+        showOutcome(Outcome::Done, what, "Saved without re-encoding");
+    } else if (size > limitSpin_->value() * MB) {
         const bool quality = rateMode() == RateMode::Quality;
         showOutcome(Outcome::OverLimit,
                     what + QString("<br>It is over the %1 MB limit: use “%2” or lower the %3 a bit and try again.")
@@ -1337,7 +1579,7 @@ void MainWindow::fitToContent()
 
 // Shows how the compression ended in a colored box under the buttons, and draws attention to the window
 // (taskbar button on Windows, Dock icon on macOS) if it is in the background.
-void MainWindow::showOutcome(Outcome outcome, const QString &text)
+void MainWindow::showOutcome(Outcome outcome, const QString &text, const QString &title)
 {
     static const struct {
         const char *title;
@@ -1355,7 +1597,7 @@ void MainWindow::showOutcome(Outcome outcome, const QString &text)
                                    .arg(look.rgb));
     const int size = outcomeTitle_->fontMetrics().height() * 2;
     outcomeIcon_->setPixmap(badge(QColor(look.color), look.symbol, size, devicePixelRatioF()));
-    outcomeTitle_->setText(look.title);
+    outcomeTitle_->setText(title.isEmpty() ? QString(look.title) : title);
     outcomeText_->setText(text);
     playBtn_->setVisible(outcome != Outcome::Failed);
     openBtn_->setVisible(outcome != Outcome::Failed);
@@ -1391,6 +1633,7 @@ void MainWindow::setRunning(bool running)
         openBtn_->setEnabled(false);
     for (QWidget *w : std::initializer_list<QWidget *>{inEdit_, inBtn_, outEdit_, outBtn_, settingsBox_, limitSpin_})
         w->setEnabled(!running);
+    editor_->setBusy(running);
     if (!running && resumeEstimate_) {   // the compression interrupted an estimate: finish it
         resumeEstimate_ = false;
         onSettingsChanged();

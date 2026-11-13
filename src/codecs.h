@@ -75,9 +75,10 @@ struct AudioCodec {
     QString label;
     QString encoder;
     QString name;
-    QStringList extra;
+    QString filter;             // audio filter the encoder needs, if any
 
-    QStringList args(int kbps) const;
+    // filter: as -af (false when the audio comes out of a filter graph, which has the filter at its end)
+    QStringList args(int kbps, bool filter = true) const;
 };
 
 struct Format {

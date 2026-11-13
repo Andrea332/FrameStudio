@@ -1,6 +1,7 @@
 #pragma once
 
 #include "codecs.h"
+#include "editlist.h"
 #include "media.h"
 #include "updatechecker.h"
 
@@ -13,10 +14,12 @@
 #include <QWidget>
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
+class Editor;
 class EncoderCheck;
 class SizeEstimator;
 class Spinner;
@@ -35,6 +38,8 @@ class QPushButton;
 class QScrollArea;
 class QSlider;
 class QSpinBox;
+class QTabWidget;
+class QTemporaryDir;
 class QTimer;
 
 class MainWindow : public QWidget
@@ -48,8 +53,9 @@ public:
 
     void setInput(const QString &path);
 
-    // Shows a message box; tests replace it so that no dialog blocks them.
+    // Shows a message box, or asks a yes/no question; tests replace them so that no dialog blocks them.
     std::function<void(QMessageBox::Icon, const QString &title, const QString &text)> showMessage;
+    std::function<bool(const QString &title, const QString &text)> askQuestion;
 
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
@@ -76,11 +82,21 @@ private:
     void onRateModeChanged();
     void onAudioCodecChanged();
     void updateAudioWidgets();
-    QStringList videoArgs() const;
+    QStringList videoFilters() const;
+    QStringList videoCodecArgs() const;
+    QStringList videoArgs() const;   // for one input: the samples of the estimate, or the video in one piece
+    QStringList concatArgs(int inputs, const AudioCodec *acodec, int kbps) const;
     void updateQualityLabel();
     void onSettingsChanged();
 
+    // the edited video (from the Editor tab), or the whole video
+    std::vector<Piece> outputPieces() const;
+    double outputDuration() const;
+    void onEditsChanged();
+
     // size estimate
+    QList<QPair<double, double>> estimateSamples(bool *exact) const;
+    QString estimateKey() const;
     void runEstimate();
     double estimatedBytes() const;
     void onEstimateDone(double bps, bool exact);
@@ -100,8 +116,12 @@ private:
     void pickOutput();
     void openFolder();
 
-    // compression
+    // compression, and the copy of the edited video without re-encoding
     void start();
+    void pickCopyOutput();
+    void saveCopy(const QString &out);
+    enum class Job { Compress, Copy };
+    void runFfmpeg(const QStringList &args, const QString &out, double duration, Job job);
     void onStdout();
     void onStderr();
     void onFinished(int code, QProcess::ExitStatus status);
@@ -109,7 +129,7 @@ private:
     void setRunning(bool running);
     void fitToContent();
     enum class Outcome { Done, OverLimit, Failed };
-    void showOutcome(Outcome outcome, const QString &text);
+    void showOutcome(Outcome outcome, const QString &text, const QString &title = {});
 
     // updates
     void checkForUpdates(bool manual);
@@ -149,6 +169,9 @@ private:
     QProcess *previewProc_ = nullptr;   // extracts the preview frame of the source video
     int previewGen_ = 0;                // discards frames of videos that are no longer loaded
     QString currentOutput_;
+    Job job_ = Job::Compress;
+    double jobDuration_ = 0;              // of the file being written, for the progress
+    std::unique_ptr<QTemporaryDir> copyDir_;   // the list of pieces for the copy without re-encoding
     QElapsedTimer encodeClock_;
     QString outBuf_;
     QStringList stderrTail_;
@@ -171,6 +194,9 @@ private:
     QPushButton *checkNowBtn_;
     QLabel *updateStatus_;
 
+    QTabWidget *tabs_;
+    Editor *editor_;
+    QLabel *editNotice_;   // in the Compress tab, when the video was edited
     QLineEdit *inEdit_;
     QPushButton *inBtn_;
     QLabel *preview_;

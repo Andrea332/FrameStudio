@@ -7,6 +7,7 @@
 struct MediaInfo {
     QString path;
     double duration = 0;
+    double startTime = 0;       // timestamp where the file starts (e.g. 1.4 s in MPEG-TS), times are relative to it
     int width = 0;              // as displayed (rotation already applied)
     int height = 0;
     int videoIndex = 0;         // stream index of the main video (cover art is skipped)

@@ -20,9 +20,10 @@ public:
     SizeEstimator(const QString &ffmpeg, const QString &ffprobe, QObject *parent = nullptr);
     ~SizeEstimator() override;
 
-    // segments: (start, length) in seconds; keyint: seconds between keyframes in the real encode
+    // segments: (start, length) in seconds; keyint: seconds between keyframes in the real encode;
+    // exact: the segment is the whole result (otherwise the samples' extra keyframes are subtracted)
     void start(const QString &path, const QList<QPair<double, double>> &segments, const QStringList &videoArgs,
-               const QString &ext, int keyint);
+               const QString &ext, int keyint, bool exact);
     void stop();
     bool running() const { return proc_ != nullptr; }
 

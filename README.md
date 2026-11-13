@@ -91,6 +91,9 @@ It keeps its settings in `VideoCompressor.ini` in that folder instead of in
 
 ## Features
 
+- **Editor**: cut, copy, paste, delete and move parts of the video, with undo,
+  before compressing it, or save it as it is without re-encoding (see
+  [Editor](#editor) below).
 - **Reliable output size estimate**: instead of a theoretical calculation, the
   app actually encodes a few short samples of the video with the chosen
   settings. This makes the estimate work well with any kind of content (screen
@@ -161,6 +164,43 @@ It keeps its settings in `VideoCompressor.ini` in that folder instead of in
 - Drag and drop a video onto the window, progress bar and cancel button.
 - **FFmpeg included**: the packaged app needs nothing else installed.
 
+## Editor
+
+<p align="center">
+  <!-- taken automatically for every release, like the picture at the top -->
+  <img src="https://github.com/Andrea332/VideoCompressor/releases/latest/download/VideoCompressor-editor.png"
+       alt="The Editor tab: video preview, playback controls, the timeline with three pieces, and the editing buttons" width="640">
+</p>
+
+The **Editor** tab shows the video with its sound, and the timeline below it:
+the edited video as a strip of pieces of the original, with thumbnails. Each
+editing button also has a key:
+
+| Key | Does |
+|-----|------|
+| Space | Play or pause |
+| Left / Right | One frame back or forward (Shift: one second) |
+| Home / End | To the start or the end |
+| I / O | The selection starts or ends at the playhead |
+| S | Splits the piece at the playhead in two |
+| Ctrl+X / Ctrl+C / Ctrl+V | Cuts, copies the selection, or pastes it at the playhead |
+| Del | Removes the selection |
+| Ctrl+Z / Ctrl+Y | Undo, redo |
+| Ctrl+A / Esc | Selects everything, or nothing |
+
+With the mouse: click the timeline to move the playhead, drag to select,
+double-click a piece to select it, and drag the selection somewhere else to
+move it there (or drag its edges to change it). Ctrl+wheel zooms in on the
+timeline, the wheel scrolls it.
+
+When the video is edited, **Compress** encodes only what is left, in the order
+of the timeline, cutting exactly on the frames you chose; the size estimate
+and *Fit to limit* work on the edited video. **Save without re-encoding** saves
+the edited video right away in the original format and quality, with nothing
+compressed. Without re-encoding, though, a piece can only start on a keyframe
+(the marks under the timeline): a piece that starts elsewhere starts at the
+keyframe before it, and the app tells you before saving.
+
 ## Updates
 
 A few seconds after starting, at most once a day, the app asks GitHub which is
@@ -195,9 +235,9 @@ On Windows you need:
   winget install Kitware.CMake Ninja-build.Ninja
   ```
 
-- Qt 6.5 or later for MSVC 64-bit (developed with Qt 6.11.3). The build script
-  looks for it in `C:\Qt\6.11.3\msvc2022_64`; otherwise pass `-QtDir` or set
-  `QTDIR`.
+- Qt 6.5 or later for MSVC 64-bit (developed with Qt 6.11.3), with the Qt
+  Multimedia module (used by the Editor to play videos). The build script looks
+  for it in `C:\Qt\6.11.3\msvc2022_64`; otherwise pass `-QtDir` or set `QTDIR`.
 - [FFmpeg](https://ffmpeg.org/) (`ffmpeg.exe` and `ffprobe.exe`), either in an
   `ffmpeg/` folder inside the project or in your `PATH`:
 
@@ -303,7 +343,11 @@ The packaged app also includes:
 
 - [Qt 6](https://www.qt.io/), used under the LGPLv3. Its license texts are in
   the `licenses` folder of the package; the Qt source code is available at
-  [download.qt.io](https://download.qt.io/official_releases/qt/).
+  [download.qt.io](https://download.qt.io/official_releases/qt/). Qt
+  Multimedia plays videos with its own build of the FFmpeg libraries (the
+  `avcodec`, `avformat`, `avutil`, `swresample` and `swscale` libraries next to
+  the program): FFmpeg 7.1, under the LGPL 2.1 or later, which the LGPLv3 text
+  covers. Its source code is at [ffmpeg.org](https://ffmpeg.org/releases/).
 - [FFmpeg](https://ffmpeg.org/), licensed under the GPLv3. Its license and
   build information, including where to find the FFmpeg source code, are in the
   `ffmpeg` folder of the package (in the app's `Contents/Resources` on macOS).
