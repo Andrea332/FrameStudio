@@ -7,7 +7,7 @@
 
 // The portable versions keep their preferences in this file next to the program (on Linux at the top of the
 // extracted folder, on macOS next to the app): it comes with them, and finding it is what turns this on.
-inline constexpr const char *PORTABLE_SETTINGS_FILE = "VideoCompressor.ini";
+inline constexpr const char *PORTABLE_SETTINGS_FILE = "FrameStudio.ini";
 
 // Where the portable settings file is for a program in appDir (QCoreApplication::applicationDirPath())
 QString portableSettingsPath(const QString &appDir);

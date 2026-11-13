@@ -14,6 +14,9 @@ struct MediaInfo {
     int videoIndex = 0;         // stream index of the main video (cover art is skipped)
     double fps = 0;
     bool hasAudio = false;
+    int audioChannels = 0;      // of the first audio track
+    int audioKbps = 0;          // of the first audio track, 0 if unknown
+    int videoKbps = 0;          // of the video track (or of the whole file), 0 if unknown
     qint64 size = 0;
 };
 

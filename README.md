@@ -1,15 +1,19 @@
-# Video Compressor
+# FrameStudio
 
-A small desktop app to compress videos at a chosen quality, with a
-**preview of the final file size** before you start compressing.
+A desktop app to cut and rearrange videos and export them at the quality or
+size you want, with a **preview of the final file size** before exporting.
 
 Handy for staying under the size limits of email, chat apps or upload
-platforms: set the limit in MB and the app finds the best quality that fits.
+platforms: set the limit in MB and the app finds the best quality that fits,
+or let it analyze the video and choose everything by itself.
+
+FrameStudio was called *Video Compressor* up to version 2.4: an installed
+Video Compressor updates itself to FrameStudio.
 
 <p align="center">
   <!-- taken automatically for every release (see .github/workflows/build.yml): this is always the latest one -->
-  <img src="https://github.com/Andrea332/VideoCompressor/releases/latest/download/VideoCompressor-screenshot.png"
-       alt="Video Compressor with a video loaded: preview frame, settings and estimated output size" width="640">
+  <img src="https://github.com/Andrea332/VideoCompressor/releases/latest/download/FrameStudio-screenshot.png"
+       alt="FrameStudio with a video loaded: preview frame, automatic settings, settings and estimated output size" width="640">
 </p>
 
 ## Download
@@ -31,19 +35,18 @@ There are two versions: `win64` for most PCs (Intel and AMD processors) and
 laptops. If you are not sure, open **Settings → System → About**: *System type*
 says "x64-based processor" or "ARM-based processor".
 
-- **Installer** (`VideoCompressor-<version>-win64.exe` or
-  `-win-arm64.exe`, the smaller download):
-  run it and follow the steps. By default it installs for your user only, with
-  no administrator rights; you can choose to install for all users instead.
-  It adds Video Compressor to the Start menu (and, if you want, to the
-  desktop), and you can uninstall it from Windows Settings like any other app.
-  The app updates itself from then on (see *Updates* below).
-- **Portable** (`VideoCompressor-<version>-win64-portable.zip` or
-  `-win-arm64-portable.zip`): extract it and run `VideoCompressor.exe` inside
-  the extracted folder. Keep the folder as it is, because the program needs the
+- **Installer** (`FrameStudio-<version>-win64.exe` or `-win-arm64.exe`, the
+  smaller download): run it and follow the steps. By default it installs for
+  your user only, with no administrator rights; you can choose to install for
+  all users instead. It adds FrameStudio to the Start menu (and, if you want,
+  to the desktop), and you can uninstall it from Windows Settings like any
+  other app. The app updates itself from then on (see *Updates* below).
+- **Portable** (`FrameStudio-<version>-win64-portable.zip` or
+  `-win-arm64-portable.zip`): extract it and run `FrameStudio.exe` inside the
+  extracted folder. Keep the folder as it is, because the program needs the
   files next to it (Qt libraries and the `ffmpeg` folder). It keeps its
-  settings in `VideoCompressor.ini` in the same folder and writes nothing to
-  the registry, so it leaves no trace on the PC (delete that file to keep the
+  settings in `FrameStudio.ini` in the same folder and writes nothing to the
+  registry, so it leaves no trace on the PC (delete that file to keep the
   settings in the registry instead).
 
 The app is not code-signed, so Windows SmartScreen may show "Windows protected
@@ -51,24 +54,24 @@ your PC" the first time: click **More info** → **Run anyway**.
 
 ### macOS 13 or later, Apple Silicon (M1 or later)
 
-Open `VideoCompressor-<version>-macos-arm64.dmg` and drag Video Compressor into
-Applications. The portable version, `VideoCompressor-<version>-macos-arm64-portable.zip`,
+Open `FrameStudio-<version>-macos-arm64.dmg` and drag FrameStudio into
+Applications. The portable version, `FrameStudio-<version>-macos-arm64-portable.zip`,
 is the same app in a zip: extract it and run it from any folder.
 
 The app is not signed by a registered Apple developer, so the first time macOS
 blocks it. Open **System Settings → Privacy & Security**, scroll down and click
-**Open Anyway** next to the message about Video Compressor, then confirm. This
-is needed only once.
+**Open Anyway** next to the message about FrameStudio, then confirm. This is
+needed only once.
 
 ### Linux (x86_64 or ARM64)
 
-Download `VideoCompressor-<version>-linux-x86_64.AppImage` (most PCs) or
+Download `FrameStudio-<version>-linux-x86_64.AppImage` (most PCs) or
 `-linux-aarch64.AppImage` (ARM64, for example a Raspberry Pi 4 or 5 with a
 64-bit system), make it executable and run it:
 
 ```bash
-chmod +x VideoCompressor-*.AppImage
-./VideoCompressor-*.AppImage
+chmod +x FrameStudio-*.AppImage
+./FrameStudio-*.AppImage
 ```
 
 The x86_64 version works on distributions from 2022 on (for example Ubuntu
@@ -77,23 +80,26 @@ on (Ubuntu 24.04, Debian 13, Fedora 40, Raspberry Pi OS based on Debian 13 and
 later). If it doesn't start because FUSE is missing, run it with
 `--appimage-extract-and-run`, or use the portable version.
 
-The portable version, `VideoCompressor-<version>-linux-x86_64-portable.tar.gz`
-(or `-linux-aarch64-portable.tar.gz`), is the same app as a folder, which needs
-no FUSE: extract it anywhere and run `VideoCompressor` inside it.
+The portable version, `FrameStudio-<version>-linux-x86_64-portable.tar.gz` (or
+`-linux-aarch64-portable.tar.gz`), is the same app as a folder, which needs no
+FUSE: extract it anywhere and run `FrameStudio` inside it.
 
 ```bash
-tar -xzf VideoCompressor-*-portable.tar.gz
-./VideoCompressor-*-portable/VideoCompressor
+tar -xzf FrameStudio-*-portable.tar.gz
+./FrameStudio-*-portable/FrameStudio
 ```
 
-It keeps its settings in `VideoCompressor.ini` in that folder instead of in
+It keeps its settings in `FrameStudio.ini` in that folder instead of in
 `~/.config`.
 
 ## Features
 
 - **Editor**: cut, copy, paste, delete and move parts of the video, with undo,
-  before compressing it, or save it as it is without re-encoding (see
+  then export it, or save it as it is without re-encoding (see
   [Editor](#editor) below).
+- **Automatic settings**: the app analyzes the video and sets everything by
+  itself, for the best quality within your size limit or for the smallest file
+  with no visible loss (see [Automatic settings](#automatic-settings)).
 - **Reliable output size estimate**: instead of a theoretical calculation, the
   app actually encodes a few short samples of the video with the chosen
   settings. This makes the estimate work well with any kind of content (screen
@@ -164,17 +170,52 @@ It keeps its settings in `VideoCompressor.ini` in that folder instead of in
 - Drag and drop a video onto the window, progress bar and cancel button.
 - **FFmpeg included**: the packaged app needs nothing else installed.
 
+## Automatic settings
+
+At the top of the **Export** tab, choose a goal and click **Analyze and
+apply**:
+
+- **Best quality within the limit**: the app looks for the settings that stay
+  under the limit you set (below, in MB) and look as good as possible. It tries
+  the original size and frame rate, then lower ones (30 fps first, then a
+  smaller picture), each at a good quality, and keeps the first that fits;
+  then it raises the quality as far as the limit allows. A smaller picture that
+  looks clean is better than the original size full of compression artifacts.
+- **Smallest file with no visible loss**: the original size and frame rate at
+  the quality where the result still looks like the original, whatever the
+  limit. If the video is already well compressed and exporting it would save
+  little, it says so.
+
+Either way the sound gets a bitrate that suits its channels (mono, stereo or
+surround), never more than the original. The analysis also tells what it
+found: size, frame rate and bitrate of the video, how much motion and detail it
+has, and its sound. Format and codec stay as you chose them, unless you tick
+**It may also change format and codec**: then it picks the most efficient codec
+there is (AV1, otherwise H.265), which gives smaller files but doesn't play on
+some older devices. Changing any setting by hand while it works stops it.
+
 ## Editor
 
 <p align="center">
   <!-- taken automatically for every release, like the picture at the top -->
-  <img src="https://github.com/Andrea332/VideoCompressor/releases/latest/download/VideoCompressor-editor.png"
+  <img src="https://github.com/Andrea332/VideoCompressor/releases/latest/download/FrameStudio-editor.png"
        alt="The Editor tab: video preview, playback controls, the timeline with three pieces, and the editing buttons" width="640">
 </p>
 
 The **Editor** tab shows the video with its sound, and the timeline below it:
-the edited video as a strip of pieces of the original, with thumbnails. Each
-editing button also has a key:
+the edited video as a strip of pieces of the original, with thumbnails.
+
+With the mouse:
+
+- **Left button**: click or drag anywhere on the timeline (or grab the red
+  playhead) to move the playhead; the video follows, frame by frame. Drag a
+  selection to move it somewhere else, or its edges to change it. Shift+click
+  extends the selection, double-click selects a piece.
+- **Right button**: drag to select a part; a click opens a menu with cut,
+  copy, paste, delete, split and the other actions.
+- Ctrl+wheel zooms in on the timeline, the wheel scrolls it.
+
+Every action also has a key, which works anywhere in the Editor tab:
 
 | Key | Does |
 |-----|------|
@@ -185,21 +226,16 @@ editing button also has a key:
 | S | Splits the piece at the playhead in two |
 | Ctrl+X / Ctrl+C / Ctrl+V | Cuts, copies the selection, or pastes it at the playhead |
 | Del | Removes the selection |
-| Ctrl+Z / Ctrl+Y | Undo, redo |
+| Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo, redo |
 | Ctrl+A / Esc | Selects everything, or nothing |
 
-With the mouse: click the timeline to move the playhead, drag to select,
-double-click a piece to select it, and drag the selection somewhere else to
-move it there (or drag its edges to change it). Ctrl+wheel zooms in on the
-timeline, the wheel scrolls it.
-
-When the video is edited, **Compress** encodes only what is left, in the order
-of the timeline, cutting exactly on the frames you chose; the size estimate
-and *Fit to limit* work on the edited video. **Save without re-encoding** saves
-the edited video right away in the original format and quality, with nothing
-compressed. Without re-encoding, though, a piece can only start on a keyframe
-(the marks under the timeline): a piece that starts elsewhere starts at the
-keyframe before it, and the app tells you before saving.
+When the video is edited, **Export** encodes only what is left, in the order of
+the timeline, cutting exactly on the frames you chose; the size estimate, the
+automatic settings and *Fit to limit* work on the edited video. **Save without
+re-encoding** saves the edited video right away in the original format and
+quality. Without re-encoding, though, a piece can only start on a keyframe (the
+marks under the timeline): a piece that starts elsewhere starts at the keyframe
+before it, and the app tells you before saving.
 
 ## Updates
 
@@ -217,14 +253,15 @@ it off; **Check now** checks right away.
 
 ## Building from source
 
-The app is written in C++20 with [Qt 6](https://www.qt.io/) (Widgets) and
-built with CMake. Every push is built, tested and packaged on Windows, Linux
-and macOS by [GitHub Actions](.github/workflows/build.yml); for a version tag
-the packages are uploaded to the release. The workflow shows the exact steps
-for each platform: `ci/install_qt.py` installs Qt, `ci/get_ffmpeg.py`
-downloads the FFmpeg that gets bundled, and `packaging/` creates the Linux
-AppImage and the macOS disk image. The ARM64 versions are built and tested on
-GitHub's ARM64 machines, with Qt's and FFmpeg's native ARM64 builds.
+The app is written in C++20 with [Qt 6](https://www.qt.io/) (Widgets and
+Multimedia) and built with CMake. Every push is built, tested and packaged on
+Windows, Linux and macOS by [GitHub Actions](.github/workflows/build.yml); for a
+version tag the packages are uploaded to the release. The workflow shows the
+exact steps for each platform: `ci/install_qt.py` installs Qt,
+`ci/get_ffmpeg.py` downloads the FFmpeg that gets bundled, and `packaging/`
+creates the Linux AppImage and the macOS disk image. The ARM64 versions are
+built and tested on GitHub's ARM64 machines, with Qt's and FFmpeg's native ARM64
+builds.
 
 On Windows you need:
 
@@ -238,6 +275,8 @@ On Windows you need:
 - Qt 6.5 or later for MSVC 64-bit (developed with Qt 6.11.3), with the Qt
   Multimedia module (used by the Editor to play videos). The build script looks
   for it in `C:\Qt\6.11.3\msvc2022_64`; otherwise pass `-QtDir` or set `QTDIR`.
+  On Linux and macOS, Qt Multimedia's player also needs the Qt Quick module
+  (`qtdeclarative`).
 - [FFmpeg](https://ffmpeg.org/) (`ffmpeg.exe` and `ffprobe.exe`), either in an
   `ffmpeg/` folder inside the project or in your `PATH`:
 
@@ -255,21 +294,21 @@ On Windows you need:
 Then, from PowerShell:
 
 ```powershell
-.\build.ps1              # build: build\VideoCompressor.exe
+.\build.ps1              # build: build\FrameStudio.exe
 .\build.ps1 -Test        # build and run the tests
 .\build.ps1 -Package     # build and create the installer and the zip in build\
 ```
 
 The script sets up the Visual Studio compiler environment by itself. To run
-`build\VideoCompressor.exe` directly, Qt's `bin` folder must be in `PATH`. You
-can pass a video as an argument to load it right away:
+`build\FrameStudio.exe` directly, Qt's `bin` folder must be in `PATH`. You can
+pass a video as an argument to load it right away:
 
 ```powershell
-build\VideoCompressor.exe "C:\path\to\video.mp4"
+build\FrameStudio.exe "C:\path\to\video.mp4"
 ```
 
-The package contains `VideoCompressor.exe`, only the Qt libraries and plugins
-it needs, the Microsoft C++ runtime and FFmpeg. The FFmpeg to bundle is the
+The package contains `FrameStudio.exe`, only the Qt libraries and plugins it
+needs, the Microsoft C++ runtime and FFmpeg. The FFmpeg to bundle is the
 `ffmpeg/` folder of the project, copied as it is; `python ci/get_ffmpeg.py
 ffmpeg` fills it with the build used for the releases. If that folder doesn't
 exist, on Windows the FFmpeg found in `PATH` is used. The same FFmpeg is copied
@@ -303,13 +342,15 @@ window offscreen: every format, codec and device combination (checking which
 encoder actually wrote the file), every bitrate mode of every encoder, portrait
 phone videos, cover art, keyframe spacing and closed GOP, the position of the
 seek index, the accuracy of the estimate, *Fit quality to limit* and *Fit
-bitrate to limit*, and the box shown at the end. GPU encoders are tested only
-when the PC has them.
+bitrate to limit*, the automatic settings, the editing (with the keyboard and
+the mouse), playback, export and the copy without re-encoding of edited videos
+(checking the order of their frames), and the box shown at the end. GPU
+encoders are tested only when the PC has them.
 
 ## How the estimate works
 
-1. Four 4-second samples spread across the video are encoded with the chosen
-   video settings.
+1. Four 4-second samples spread across the video (or across what is left of it
+   after editing) are encoded with the chosen video settings.
 2. Each sample starts with a keyframe, while the real file only has one every
    few seconds: the size of the keyframes the samples have in excess is
    subtracted. Without this, videos with little motion (where keyframes are

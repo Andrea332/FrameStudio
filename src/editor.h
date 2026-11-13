@@ -14,6 +14,7 @@ class QLabel;
 class QMediaPlayer;
 class QProcess;
 class QPushButton;
+class QShortcut;
 class QTimer;
 class QToolButton;
 class Timeline;
@@ -72,6 +73,7 @@ private:
     void undo();
     void redo();
     void reset();
+    void showMenu(double t, const QPoint &globalPos);
     bool change(const std::vector<Piece> &before, const QString &what);   // after an edit: undo, display
     bool leavesNothing(double from, double to) const;
     void editsUpdated();
@@ -113,6 +115,7 @@ private:
     QLabel *timeLabel_;
     QLabel *status_;
     QList<QAbstractButton *> editButtons_;
+    QList<QShortcut *> shortcuts_;
     QToolButton *startBtn_;
     QToolButton *endBtn_;
     QToolButton *splitBtn_;

@@ -123,8 +123,8 @@ jobs:
           $env:VC_SCREENSHOT_DIR = "$PWD\build"
           build\tst_video_compressor.exe rendersWindow
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          Move-Item build\window.png build\VideoCompressor-screenshot.png -Force
-          Move-Item build\editor.png build\VideoCompressor-editor.png -Force
+          Move-Item build\window.png build\FrameStudio-screenshot.png -Force
+          Move-Item build\editor.png build\FrameStudio-editor.png -Force
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -144,9 +144,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # the portable zip's copy: its VideoCompressor.ini keeps the settings in the folder
-          $app = Get-ChildItem build/_CPack_Packages/*/ZIP -Recurse -Filter VideoCompressor.exe | Select-Object -First 1
-          if (-not (Test-Path "$($app.DirectoryName)/VideoCompressor.ini")) { throw "no VideoCompressor.ini in the zip" }
+          # the portable zip's copy: its FrameStudio.ini keeps the settings in the folder
+          $app = Get-ChildItem build/_CPack_Packages/*/ZIP -Recurse -Filter FrameStudio.exe | Select-Object -First 1
+          if (-not (Test-Path "$($app.DirectoryName)/FrameStudio.ini")) { throw "no FrameStudio.ini in the zip" }
           # the Editor plays videos with Qt Multimedia and its own FFmpeg libraries
           if (-not (Test-Path "$($app.DirectoryName)/multimedia/ffmpegmediaplugin.dll")) { throw "no Qt Multimedia plugin" }
           if (-not (Get-ChildItem $app.DirectoryName -Filter "avcodec-*.dll")) { throw "no FFmpeg libraries for Qt Multimedia" }
@@ -164,25 +164,25 @@ jobs:
           $p.Refresh()
           if ($p.HasExited) { throw "the app exited with code $($p.ExitCode)" }
           # a Qt error dialog would keep the process alive too: the main window must be there
-          if ($p.MainWindowTitle -notlike "Video Compressor*") { throw "unexpected window: '$($p.MainWindowTitle)'" }
+          if ($p.MainWindowTitle -notlike "FrameStudio*") { throw "unexpected window: '$($p.MainWindowTitle)'" }
           Stop-Process -Id $p.Id
-          Get-Content "$($app.DirectoryName)/VideoCompressor.ini"   # with the update check's date, if it got online
+          Get-Content "$($app.DirectoryName)/FrameStudio.ini"   # with the update check's date, if it got online
 
       - name: Smoke test of the package (Linux)
         if: runner.os == 'Linux'
         working-directory: build
         run: |
           sudo apt-get install -y xvfb
-          ./VideoCompressor-*.AppImage --appimage-extract > /dev/null
+          ./FrameStudio-*.AppImage --appimage-extract > /dev/null
           squashfs-root/usr/bin/ffmpeg/bin/ffmpeg -hide_banner -version | head -n 1
           ls squashfs-root/usr/plugins/multimedia/libffmpegmediaplugin.so   # the Editor's video player
           status=0
           xvfb-run -a timeout 10 squashfs-root/AppRun || status=$?
           [ "$status" -eq 124 ] || { echo "the app exited with code $status"; exit 1; }
           # the portable folder, run from where it is extracted
-          mkdir portable && tar -C portable -xzf VideoCompressor-*-portable.tar.gz
-          launcher=$(ls -d portable/*/VideoCompressor)
-          [ -f "$(dirname "$launcher")/VideoCompressor.ini" ] || { echo "no VideoCompressor.ini"; exit 1; }
+          mkdir portable && tar -C portable -xzf FrameStudio-*-portable.tar.gz
+          launcher=$(ls -d portable/*/FrameStudio)
+          [ -f "$(dirname "$launcher")/FrameStudio.ini" ] || { echo "no FrameStudio.ini"; exit 1; }
           status=0
           xvfb-run -a timeout 10 "$launcher" || status=$?
           [ "$status" -eq 124 ] || { echo "the portable app exited with code $status"; exit 1; }
@@ -190,30 +190,30 @@ jobs:
       - name: Smoke test of the package (macOS)
         if: runner.os == 'macOS'
         run: |
-          app=build/dmg/VideoCompressor.app/Contents/MacOS
+          app=build/dmg/FrameStudio.app/Contents/MacOS
           "$app/ffmpeg/ffmpeg" -hide_banner -version | head -n 1
           ls "$app/../PlugIns/multimedia/libffmpegmediaplugin.dylib"   # the Editor's video player
-          "$app/VideoCompressor" &
+          "$app/FrameStudio" &
           pid=$!
           sleep 10
           kill -0 "$pid" || { echo "the app exited"; exit 1; }
           kill "$pid"
           # the portable zip has the whole app, still signed
-          ditto -x -k build/VideoCompressor-*-portable.zip portable
-          codesign --verify --deep --strict portable/VideoCompressor.app
+          ditto -x -k build/FrameStudio-*-portable.zip portable
+          codesign --verify --deep --strict portable/FrameStudio.app
 
       - uses: actions/upload-artifact@v4
         with:
-          name: VideoCompressor-${{ runner.os }}-${{ runner.arch }}
+          name: FrameStudio-${{ runner.os }}-${{ runner.arch }}
           if-no-files-found: error
           path: |
-            build/VideoCompressor-screenshot.png
-            build/VideoCompressor-editor.png
-            build/VideoCompressor-*-win*.exe
-            build/VideoCompressor-*-win*.zip
-            build/VideoCompressor-*.AppImage
-            build/VideoCompressor-*.dmg
-            build/VideoCompressor-*-portable.*
+            build/FrameStudio-screenshot.png
+            build/FrameStudio-editor.png
+            build/FrameStudio-*-win*.exe
+            build/FrameStudio-*-win*.zip
+            build/FrameStudio-*.AppImage
+            build/FrameStudio-*.dmg
+            build/FrameStudio-*-portable.*
 
   # Tests built with AddressSanitizer and UndefinedBehaviorSanitizer: any invalid memory access, in the app
   # or in Qt while it uses the app's objects, stops the tests with the exact place
@@ -277,5 +277,5 @@ jobs:
         run: |
           gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
-              --title "Video Compressor ${GITHUB_REF_NAME#v}" --notes "Release notes coming soon."
+              --title "FrameStudio ${GITHUB_REF_NAME#v}" --notes "Release notes coming soon."
           gh release upload "$GITHUB_REF_NAME" packages/* --clobber

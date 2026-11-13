@@ -37,7 +37,7 @@ def fetch(url, attempts=4):
     """Downloads url, trying again a few times if the server doesn't answer (a missing file fails at once)."""
     for attempt in range(1, attempts + 1):
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "VideoCompressor-CI"}), timeout=600) as response:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "FrameStudio-CI"}), timeout=600) as response:
                 return response.read()
         except urllib.error.HTTPError as error:
             if error.code < 500 or attempt == attempts:

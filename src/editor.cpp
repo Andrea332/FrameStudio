@@ -8,6 +8,9 @@
 #include <QImage>
 #include <QLabel>
 #include <QMediaPlayer>
+#include <QMenu>
+#include <QPainter>
+#include <QPainterPath>
 #include <QProcess>
 #include <QPushButton>
 #include <QShortcut>
@@ -28,6 +31,32 @@ constexpr int THUMBNAIL_HEIGHT = 112;   // pixels: sharp on the timeline also on
 qint64 milliseconds(double seconds)
 {
     return std::llround(seconds * 1000);
+}
+
+// A curved arrow, pointing left (undo) or right (redo)
+QIcon arrowIcon(bool redo, const QColor &color)
+{
+    QIcon icon;
+    for (int size : {16, 24, 32, 48}) {
+        QPixmap pix(size, size);
+        pix.fill(Qt::transparent);
+        QPainter p(&pix);
+        p.setRenderHint(QPainter::Antialiasing);
+        if (redo)
+            p.setTransform(QTransform(-1, 0, 0, 1, size, 0));   // the same arrow, mirrored
+        const double u = size / 16.0;
+        p.setPen(QPen(color, 1.6 * u, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        QPainterPath arc;   // from the head, around and down
+        arc.moveTo(4 * u, 6 * u);
+        arc.lineTo(10 * u, 6 * u);
+        arc.cubicTo(13.5 * u, 6 * u, 13.5 * u, 13 * u, 10 * u, 13 * u);
+        arc.lineTo(6 * u, 13 * u);
+        p.drawPath(arc);
+        p.drawPolyline(QPolygonF({{7 * u, 3 * u}, {4 * u, 6 * u}, {7 * u, 9 * u}}));
+        p.end();
+        icon.addPixmap(pix);
+    }
+    return icon;
 }
 
 double totalLength(const std::vector<Piece> &pieces)
@@ -120,15 +149,17 @@ Editor::Editor(const QString &ffmpeg, const QString &ffprobe, QWidget *parent)
 
     // --- Timeline ---
     timeline_ = new Timeline;
-    timeline_->setToolTip("Click to move the playhead, drag to select, drag the selection to move it,\n"
-                          "double-click a piece to select it. Ctrl+wheel zooms, the wheel scrolls.\n"
-                          "The marks under the pieces are keyframes: where a copy without re-encoding can start.");
+    timeline_->setToolTip("Left button: click or drag to move the playhead, drag the selection to move it.\n"
+                          "Right button: drag to select, click for the menu. Double-click selects a piece.\n"
+                          "Ctrl+wheel zooms, the wheel scrolls. The marks under the pieces are keyframes:\n"
+                          "where a copy without re-encoding can start.");
     connect(timeline_, &Timeline::playheadDragged, this, [this](double t) {
         pause();
         seek(t);
     });
     connect(timeline_, &Timeline::selectionChanged, this, &Editor::updateActions);
     connect(timeline_, &Timeline::moveRequested, this, &Editor::moveSelection);
+    connect(timeline_, &Timeline::menuRequested, this, &Editor::showMenu);
 
     // --- Editing ---
     // tool buttons: as wide as their text (push buttons are at least 80 pixels wide on Windows)
@@ -150,7 +181,11 @@ Editor::Editor(const QString &ffmpeg, const QString &ffprobe, QWidget *parent)
     pasteBtn_ = editButton("Paste", "Inserts what was cut or copied at the playhead (Ctrl+V)", [this] { paste(); });
     deleteBtn_ = editButton("Delete", "Removes the selection (Del)", [this] { deleteSelection(); });
     undoBtn_ = editButton("Undo", "Undo (Ctrl+Z)", [this] { undo(); });
-    redoBtn_ = editButton("Redo", "Redo (Ctrl+Y)", [this] { redo(); });
+    redoBtn_ = editButton("Redo", "Redo (Ctrl+Y or Ctrl+Shift+Z)", [this] { redo(); });
+    for (QToolButton *b : {undoBtn_, redoBtn_}) {
+        b->setIcon(arrowIcon(b == redoBtn_, palette().color(QPalette::ButtonText)));
+        b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    }
     auto *tools = new QHBoxLayout;
     tools->setSpacing(4);
     for (QToolButton *b : {startBtn_, endBtn_, splitBtn_})
@@ -174,8 +209,8 @@ Editor::Editor(const QString &ffmpeg, const QString &ffprobe, QWidget *parent)
     saveCopyBtn_->setFocusPolicy(Qt::NoFocus);
     saveCopyBtn_->setToolTip("Saves the edited video right away, in the original quality and format.\n"
                              "Without re-encoding, each piece can only start on a keyframe: one that starts\n"
-                             "elsewhere starts at the keyframe before. To compress it, or to cut exactly\n"
-                             "on any frame, use Compress.");
+                             "elsewhere starts at the keyframe before. To make it smaller, or to cut exactly\n"
+                             "on any frame, use Export.");
     connect(saveCopyBtn_, &QPushButton::clicked, this, &Editor::saveCopyRequested);
     auto *bottom = new QHBoxLayout;
     bottom->addWidget(status_, 1);
@@ -189,9 +224,9 @@ Editor::Editor(const QString &ffmpeg, const QString &ffprobe, QWidget *parent)
     layout->addLayout(tools);
     layout->addLayout(bottom);
 
-    // keyboard, while the Editor tab has the focus
+    // keyboard: anywhere in the window while the Editor tab is shown (a text field keeps its own keys)
     const auto key = [this](const QKeySequence &keys, auto slot) {
-        new QShortcut(keys, this, slot, Qt::WidgetWithChildrenShortcut);
+        shortcuts_ << new QShortcut(keys, this, slot, Qt::WindowShortcut);
     };
     key(Qt::Key_Space, [this] { togglePlay(); });
     key(Qt::Key_Left, [this] { stepFrames(-1); });
@@ -217,6 +252,8 @@ Editor::Editor(const QString &ffmpeg, const QString &ffprobe, QWidget *parent)
     key(Qt::CTRL | Qt::Key_Equal, [this] { timeline_->zoomBy(1.5); });
     key(Qt::CTRL | Qt::Key_Minus, [this] { timeline_->zoomBy(1 / 1.5); });
     key(Qt::CTRL | Qt::Key_0, [this] { timeline_->zoomToFit(); });
+    for (QShortcut *s : std::as_const(shortcuts_))
+        s->setEnabled(false);   // until the tab is shown
 
     setMedia(std::nullopt);
 }
@@ -285,12 +322,16 @@ void Editor::setBusy(bool busy)
 void Editor::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    for (QShortcut *s : std::as_const(shortcuts_))
+        s->setEnabled(true);
     if (keyframesReady_ && !thumbsStarted_)
         nextThumbnail();
 }
 
 void Editor::hideEvent(QHideEvent *event)
 {
+    for (QShortcut *s : std::as_const(shortcuts_))
+        s->setEnabled(false);   // the other tab's keys are its own
     pause();
     QWidget::hideEvent(event);
 }
@@ -524,6 +565,45 @@ void Editor::reset()
     edits_ = EditList(media_->duration);
     timeline_->setSelection(0, 0);
     change(before, "Undo all");
+}
+
+// Right click on the timeline: what can be done there
+void Editor::showMenu(double t, const QPoint &globalPos)
+{
+    if (!media_)
+        return;
+    QMenu menu(this);
+    const bool selected = timeline_->hasSelection();
+    const bool editable = !busy_;
+    const auto add = [&](const QString &text, const QKeySequence &keys, bool enabled, auto slot) {
+        // the keys only shown (as shortcuts of the actions they would clash with the editor's own)
+        QAction *action = menu.addAction(text + '	' + keys.toString(QKeySequence::NativeText), this, slot);
+        action->setEnabled(enabled);
+    };
+    add("Cut", QKeySequence::Cut, editable && selected, [this] { cut(); });
+    add("Copy", QKeySequence::Copy, selected, [this] { copy(); });
+    add("Paste at the playhead", QKeySequence::Paste, editable && !clipboard_.empty(), [this] { paste(); });
+    add("Delete", QKeySequence::Delete, editable && selected, [this] { deleteSelection(); });
+    menu.addSeparator();
+    add("Split here", Qt::Key_S, editable, [this, t] {
+        pause();
+        seek(t);
+        splitAtPlayhead();
+    });
+    add("Select this piece", QKeySequence(), true, [this, t] {
+        const auto [index, source] = edits_.locate(t);
+        if (index < 0)
+            return;
+        const double start = edits_.pieceStart(index);
+        timeline_->setSelection(start, start + edits_.pieces()[size_t(index)].length());
+        updateActions();
+    });
+    add("Select all", QKeySequence::SelectAll, true, [this] { selectAll(); });
+    add("Clear the selection", Qt::Key_Escape, selected, [this] { clearSelection(); });
+    menu.addSeparator();
+    add("Undo", QKeySequence::Undo, editable && !undo_.empty(), [this] { undo(); });
+    add("Redo", QKeySequence(Qt::CTRL | Qt::Key_Y), editable && !redo_.empty(), [this] { redo(); });
+    menu.exec(globalPos);
 }
 
 bool Editor::change(const std::vector<Piece> &before, const QString &)

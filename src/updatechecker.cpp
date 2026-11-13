@@ -25,7 +25,7 @@ QVersionNumber parseVersion(QString text)
 QNetworkRequest request(const QUrl &url)
 {
     QNetworkRequest req(url);
-    req.setHeader(QNetworkRequest::UserAgentHeader, "VideoCompressor/" + QCoreApplication::applicationVersion());
+    req.setHeader(QNetworkRequest::UserAgentHeader, "FrameStudio/" + QCoreApplication::applicationVersion());
     req.setTransferTimeout(30000);
     return req;
 }
@@ -87,7 +87,7 @@ void UpdateChecker::check()
 void UpdateChecker::download(const UpdateInfo &info)
 {
     cancelDownload();
-    const QString dir = QDir::temp().filePath("VideoCompressor-update");
+    const QString dir = QDir::temp().filePath("FrameStudio-update");
     QDir().mkpath(dir);
     file_ = new QFile(QDir(dir).filePath(info.installerName), this);
     if (!file_->open(QIODevice::WriteOnly)) {

@@ -189,7 +189,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QWidget(parent)
 {
     const QString version = QCoreApplication::applicationVersion();
-    setWindowTitle(version.isEmpty() ? QString("Video Compressor") : "Video Compressor " + version);
+    setWindowTitle(version.isEmpty() ? QString("FrameStudio") : "FrameStudio " + version);
     setAcceptDrops(true);
 
     ffmpeg_ = findTool("ffmpeg");
@@ -265,7 +265,7 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(updater_, &UpdateChecker::downloadProgress, this, [this](qint64 received, qint64 total) {
         if (pendingUpdate_ && total > 0)
-            updateText_->setText(QString("Downloading Video Compressor %1… %2%")
+            updateText_->setText(QString("Downloading FrameStudio %1… %2%")
                                      .arg(pendingUpdate_->version).arg(received * 100 / total));
     });
     connect(updater_, &UpdateChecker::downloaded, this, &MainWindow::installUpdate);
@@ -381,6 +381,34 @@ MainWindow::MainWindow(QWidget *parent)
     settingsBox_->setLayout(settingsForm_);
     settingsBox_->setEnabled(false);
 
+    // --- Automatic settings: the analyzer (autosettings.cpp) ---
+    goalCombo_ = new QComboBox;
+    goalCombo_->addItem("Best quality within the limit", false);
+    goalCombo_->addItem("Smallest file with no visible loss", true);
+    goalCombo_->setItemData(0, "Analyzes the video and picks quality, resolution, frame rate and sound to stay under\n"
+                               "the limit (below) looking as good as possible: rather than letting the quality drop\n"
+                               "below good, it lowers the frame rate or the resolution.", Qt::ToolTipRole);
+    goalCombo_->setItemData(1, "Analyzes the video and picks the settings of the smallest file that still looks like\n"
+                               "the original, whatever the limit.", Qt::ToolTipRole);
+    analyzeBtn_ = new QPushButton("Analyze and apply");
+    analyzeBtn_->setToolTip("Analyzes the video and sets everything below for the chosen goal");
+    connect(analyzeBtn_, &QPushButton::clicked, this, &MainWindow::analyze);
+    allowCodecCheck_ = new QCheckBox("It may also change format and codec");
+    allowCodecCheck_->setToolTip("Lets it pick a more efficient codec (AV1, otherwise H.265) and a format for it:\n"
+                                 "smaller files, but some older devices can't play them.");
+    autoResult_ = new QLabel;
+    autoResult_->setWordWrap(true);
+    autoResult_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    auto *goalRow = new QHBoxLayout;
+    goalRow->addWidget(goalCombo_, 1);
+    goalRow->addWidget(analyzeBtn_);
+    autoBox_ = new QGroupBox("Automatic settings");
+    auto *autoLayout = new QVBoxLayout(autoBox_);
+    autoLayout->addLayout(goalRow);
+    autoLayout->addWidget(allowCodecCheck_);
+    autoLayout->addWidget(autoResult_);
+    autoBox_->setEnabled(false);
+
     connect(formatCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::onFormatChanged);
     for (QComboBox *combo : {vcodecCombo_, accelCombo_, deviceCombo_})
         connect(combo, &QComboBox::currentIndexChanged, this, &MainWindow::updateEncoder);
@@ -415,7 +443,7 @@ MainWindow::MainWindow(QWidget *parent)
     limitStatus_ = new QLabel;
     fitBtn_ = new QPushButton("Fit quality to limit");
     fitBtn_->setEnabled(false);
-    connect(fitBtn_, &QPushButton::clicked, this, &MainWindow::fitToLimit);
+    connect(fitBtn_, &QPushButton::clicked, this, [this] { fitToLimit(); });
     auto *limitRow = new QHBoxLayout;
     limitRow->addWidget(new QLabel("Limit:"));
     limitRow->addWidget(limitSpin_);
@@ -439,7 +467,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     progress_ = new QProgressBar;
     progress_->setRange(0, 100);
-    startBtn_ = new QPushButton("Compress");
+    startBtn_ = new QPushButton("Export");
     startBtn_->setEnabled(false);
     connect(startBtn_, &QPushButton::clicked, this, &MainWindow::start);
     cancelBtn_ = new QPushButton("Cancel");
@@ -459,19 +487,20 @@ MainWindow::MainWindow(QWidget *parent)
     editNotice_->setStyleSheet("#editNotice { background: rgba(37, 99, 235, 0.10); border: 1px solid "
                                "rgba(37, 99, 235, 0.45); border-radius: 6px; padding: 6px; }");
     editNotice_->hide();
-    auto *compressTab = new QWidget;
-    auto *compressLayout = new QVBoxLayout(compressTab);
-    compressLayout->addWidget(editNotice_);
-    compressLayout->addWidget(settingsBox_);
-    compressLayout->addWidget(previewBox);
-    compressLayout->addLayout(outRow);
-    compressLayout->addLayout(startRow);
-    compressLayout->addStretch();
+    auto *exportTab = new QWidget;
+    auto *exportLayout = new QVBoxLayout(exportTab);
+    exportLayout->addWidget(editNotice_);
+    exportLayout->addWidget(autoBox_);
+    exportLayout->addWidget(settingsBox_);
+    exportLayout->addWidget(previewBox);
+    exportLayout->addLayout(outRow);
+    exportLayout->addLayout(startRow);
+    exportLayout->addStretch();
     editor_ = new Editor(ffmpeg_, ffprobe_);
     connect(editor_, &Editor::editsChanged, this, &MainWindow::onEditsChanged);
     connect(editor_, &Editor::saveCopyRequested, this, &MainWindow::pickCopyOutput);
     tabs_ = new QTabWidget;
-    tabs_->addTab(compressTab, "Compress");
+    tabs_->addTab(exportTab, "Export");
     tabs_->addTab(editor_, "Editor");
     connect(editNotice_, &QLabel::linkActivated, this, [this] { tabs_->setCurrentWidget(editor_); });
 
@@ -488,7 +517,7 @@ MainWindow::MainWindow(QWidget *parent)
     outcomeText_->setWordWrap(true);
     outcomeText_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     playBtn_ = new QPushButton("Play");
-    playBtn_->setToolTip("Open the compressed video with the default player");
+    playBtn_->setToolTip("Open the exported video with the default player");
     connect(playBtn_, &QPushButton::clicked, this, [this] {
         if (!currentOutput_.isEmpty())
             QDesktopServices::openUrl(QUrl::fromLocalFile(currentOutput_));
@@ -623,8 +652,11 @@ void MainWindow::setInput(const QString &path)
         spinner_->stop();
         outcomeBar_->hide();
         editor_->setMedia(std::nullopt);
+        stopAuto(QString());
+        autoResult_->clear();
         loadPreview();
         settingsBox_->setEnabled(false);
+        autoBox_->setEnabled(false);
         startBtn_->setEnabled(false);
         fitBtn_->setEnabled(false);
         srcInfo_->setText("⚠ Could not read the video: " + error);
@@ -637,7 +669,7 @@ void MainWindow::setInput(const QString &path)
     fit_.reset();
     const MediaInfo &m = *media_;
     const QFileInfo file(path);
-    outEdit_->setText(QDir::toNativeSeparators(file.path() + "/" + file.completeBaseName() + "_compressed." + fmt().ext));
+    outEdit_->setText(QDir::toNativeSeparators(file.path() + "/" + file.completeBaseName() + "_export." + fmt().ext));
     srcInfo_->setText(QString("Duration %1 · %2×%3 · %4 fps · audio %5 · %6")
                           .arg(fmtTime(m.duration))
                           .arg(m.width)
@@ -663,6 +695,9 @@ void MainWindow::setInput(const QString &path)
     updateAudioWidgets();
 
     settingsBox_->setEnabled(true);
+    autoBox_->setEnabled(true);
+    stopAuto(QString());
+    autoResult_->clear();
     openBtn_->setEnabled(false);
     outcomeBar_->hide();
     editor_->setMedia(media_);   // nothing edited
@@ -1033,8 +1068,10 @@ void MainWindow::updateQualityLabel()
 
 void MainWindow::onSettingsChanged()
 {
-    if (!programmatic_)
-        fit_.reset();   // a manual change interrupts the search
+    if (!programmatic_) {   // a manual change interrupts the search, and the analyzer
+        fit_.reset();
+        stopAuto("Stopped: a setting was changed by hand.");
+    }
     updateQualityLabel();
     if (!media_ || encoding_)
         return;
@@ -1078,7 +1115,7 @@ void MainWindow::onEditsChanged()
     if (media_ && editor_->edited()) {
         const EditList &edits = editor_->edits();
         editNotice_->setText(QString("✂ <b>Edited in the Editor</b>: %1 piece%2, %3 of %4. Only what is left "
-                                     "will be compressed. <a href=\"editor\">Show the Editor</a>")
+                                     "will be exported. <a href=\"editor\">Show the Editor</a>")
                                  .arg(edits.pieces().size())
                                  .arg(edits.pieces().size() == 1 ? "" : "s")
                                  .arg(fmtPrecise(edits.duration()), fmtPrecise(media_->duration)));
@@ -1179,12 +1216,17 @@ void MainWindow::onEstimateDone(double bps, bool exact)
     updateLimitStatus();
     if (fit_)
         fitStep();
+    else if (auto_ && auto_->fitting)
+        finishAuto();
+    else if (auto_)
+        autoStep();
     fitBtn_->setEnabled(!fit_);
 }
 
 void MainWindow::onEstimateFailed(const QString &message)
 {
     fit_.reset();
+    stopAuto("⚠ The analysis stopped: the estimate failed.");
     pendingKey_.reset();
     estBps_.reset();
     spinner_->stop();
@@ -1211,7 +1253,7 @@ void MainWindow::updateLimitStatus()
 
 // ------------------------------------------------ fit to limit
 // Searches for the best quality value that stays under the limit; with a bitrate, computes it.
-void MainWindow::fitToLimit()
+void MainWindow::fitToLimit(std::optional<int> bestAllowed)
 {
     if (!media_ || !estBps_ || !codec_)
         return;
@@ -1236,7 +1278,8 @@ void MainWindow::fitToLimit()
         setBitrate(std::min(kbps, MAX_VIDEO_KBPS));
         return;
     }
-    fit_ = Fit{codec_->quality.best, codec_->quality.worst, std::nullopt, {}, 8, target};
+    const int best = std::max(bestAllowed.value_or(codec_->quality.best), codec_->quality.best);
+    fit_ = Fit{best, codec_->quality.worst, std::nullopt, {}, 8, target};
     fitBtn_->setEnabled(false);
     fitStep();
 }
@@ -1283,6 +1326,9 @@ void MainWindow::fitStep()
         } else {
             setQuality(std::min(result.lo, worst));
         }
+        // the analyzer ends with this search: when the last estimate is ready, or now if there is none
+        if (auto_ && auto_->fitting && !estTimer_->isActive() && !estimator_->running())
+            finishAuto();
         return;
     }
 
@@ -1372,13 +1418,13 @@ void MainWindow::start()
     const QString rateText = rateMode() == RateMode::Quality
                                  ? QString("%1 %2").arg(codec_->qName).arg(codec_->shownQuality(quality()))
                                  : QString("%1 %2 kbps").arg(rateModeName(rateMode())).arg(bitrateSpin_->value());
-    log_->appendPlainText(QString("Compressing: %1 · %2 · %3 · %4 · %5 · %6%7 · keyframes every %8 s")
+    log_->appendPlainText(QString("Exporting: %1 · %2 · %3 · %4 · %5 · %6%7 · keyframes every %8 s")
                               .arg(f.label, encoderSummary(), rateText, resCombo_->currentText(),
                                    fpsCombo_->currentText(), audio, speed)
                               .arg(keyint()));
     if (editor_->edited())
         log_->appendPlainText(QString("Edited: %1 pieces, %2").arg(pieces.size()).arg(fmtPrecise(outputDuration())));
-    runFfmpeg(args, out, outputDuration(), Job::Compress);
+    runFfmpeg(args, out, outputDuration(), Job::Export);
 }
 
 void MainWindow::pickCopyOutput()
@@ -1420,7 +1466,7 @@ void MainWindow::saveCopy(const QString &out)
     if (moved && !askQuestion("Save without re-encoding",
                               QString("Without re-encoding, a piece can only start on a keyframe: %1 of the %2 "
                                       "pieces will start earlier, by up to %3 s.\n\n"
-                                      "To cut exactly where you chose, use Compress. Save anyway?")
+                                      "To cut exactly where you chose, use Export. Save anyway?")
                                   .arg(moved)
                                   .arg(pieces.size())
                                   .arg(earliest, 0, 'f', 2)))
@@ -1531,7 +1577,7 @@ void MainWindow::onFinished(int code, QProcess::ExitStatus status)
     progress_->setValue(100);
     const double size = double(QFileInfo(currentOutput_).size());
     QString msg = QString("Done! %1 → %2").arg(fmtMb(size), currentOutput_);
-    if (estBps_ && job_ == Job::Compress)
+    if (estBps_ && job_ == Job::Export)
         msg += QString("\n(estimate was %1)").arg(fmtMb(estimatedBytes()));
     log_->appendPlainText(msg);
     openBtn_->setEnabled(true);
@@ -1587,9 +1633,9 @@ void MainWindow::showOutcome(Outcome outcome, const QString &text, const QString
         const char *rgb;
         char symbol;
     } looks[] = {
-        {"Compression complete", "#2e7d32", "46, 125, 50", 'v'},
-        {"Compression complete, but over the limit", "#d07a00", "232, 137, 12", '!'},
-        {"Compression failed", "#c62828", "198, 40, 40", 'x'},
+        {"Export complete", "#2e7d32", "46, 125, 50", 'v'},
+        {"Export complete, but over the limit", "#d07a00", "232, 137, 12", '!'},
+        {"Export failed", "#c62828", "198, 40, 40", 'x'},
     };
     const auto &look = looks[int(outcome)];
     outcomeBar_->setStyleSheet(QString("#outcomeBar { background: rgba(%1, 0.13); border: 1px solid rgba(%1, 0.7); "
@@ -1631,7 +1677,8 @@ void MainWindow::setRunning(bool running)
     fitBtn_->setEnabled(!running && estBps_ && !fit_);
     if (running)
         openBtn_->setEnabled(false);
-    for (QWidget *w : std::initializer_list<QWidget *>{inEdit_, inBtn_, outEdit_, outBtn_, settingsBox_, limitSpin_})
+    for (QWidget *w : std::initializer_list<QWidget *>{inEdit_, inBtn_, outEdit_, outBtn_, settingsBox_, autoBox_,
+                                                       limitSpin_})
         w->setEnabled(!running);
     editor_->setBusy(running);
     if (!running && resumeEstimate_) {   // the compression interrupted an estimate: finish it
@@ -1651,7 +1698,7 @@ void MainWindow::checkForUpdates(bool manual)
     updater_->check();
 }
 
-// As text (2026-10-08T09:30:00Z), readable in the portable version's VideoCompressor.ini; it's read back
+// As text (2026-10-08T09:30:00Z), readable in the portable version's FrameStudio.ini; it's read back
 // as a date like the values that older versions saved as dates.
 void MainWindow::saveLastUpdateCheck()
 {
@@ -1662,7 +1709,7 @@ void MainWindow::onUpdateAvailable(const UpdateInfo &info)
 {
     saveLastUpdateCheck();
     pendingUpdate_ = info;
-    updateText_->setText(QString("<b>Video Compressor %1</b> is available (you have %2).")
+    updateText_->setText(QString("<b>FrameStudio %1</b> is available (you have %2).")
                              .arg(info.version.toHtmlEscaped(), QCoreApplication::applicationVersion()));
     updateBtn_->setText(canSelfUpdate() ? "Update now" : "Download");
     updateBtn_->setEnabled(true);
@@ -1698,12 +1745,12 @@ void MainWindow::startUpdate()
         return;
     }
     if (encoding_) {
-        showMessage(QMessageBox::Information, "Update", "Wait for the compression to finish, then update.");
+        showMessage(QMessageBox::Information, "Update", "Wait for the export to finish, then update.");
         return;
     }
     downloadingUpdate_ = true;
     updateBtn_->setEnabled(false);
-    updateText_->setText(QString("Downloading Video Compressor %1…").arg(pendingUpdate_->version));
+    updateText_->setText(QString("Downloading FrameStudio %1…").arg(pendingUpdate_->version));
     updater_->download(*pendingUpdate_);
 }
 

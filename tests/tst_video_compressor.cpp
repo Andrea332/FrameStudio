@@ -36,6 +36,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QSlider>
 #include <QSpinBox>
 #include <QStandardItemModel>
@@ -70,6 +71,7 @@ private slots:
     void fitsToLimit();
     void encodesAtTheChosenBitrate();
     void fitsBitrateToLimit();
+    void analyzesAndSetsTheBest();
     void showsTheOutcomeClearly();
     void scrollsOnShortScreens();
     void notifiesAboutUpdates();
@@ -322,7 +324,7 @@ void TestVideoCompressor::probesTrickyInputs()
 void TestVideoCompressor::showsVersionAndSourcePreview()
 {
     MainWindow &w = *win_;
-    QCOMPARE(w.windowTitle(), QString("Video Compressor 9.9.9"));   // version set in main() below
+    QCOMPARE(w.windowTitle(), QString("FrameStudio 9.9.9"));   // version set in main() below
 
     const auto previewSize = [&](const QString &name) {
         w.setInput(path(name));
@@ -783,20 +785,66 @@ void TestVideoCompressor::fitsBitrateToLimit()
     w.limitSpin_->setValue(10);
 }
 
+// The analyzer: within a limit it lowers the size of the picture rather than the quality; for the smallest file
+// it uses the "no visible loss" quality; it changes the codec only when allowed.
+void TestVideoCompressor::analyzesAndSetsTheBest()
+{
+    MainWindow &w = *win_;
+    w.setInput(path("long.mp4"));   // 40 s at 720p, full of detail, with sound
+    select(w.formatCombo_, "mp4");
+    select(w.vcodecCombo_, "h264");
+    select(w.accelCombo_, "off");
+    select(w.acodecCombo_, "aac");
+    w.allowCodecCheck_->setChecked(false);
+    const auto analyze = [&] {
+        w.analyze();
+        return QTest::qWaitFor([&] { return !w.auto_ && !w.fit_ && settled(); }, 300000);
+    };
+
+    select(w.goalCombo_, true);   // smallest with no visible loss
+    QVERIFY(analyze());
+    QVERIFY2(w.autoResult_->text().contains("Smallest with no visible loss") && w.autoResult_->text().contains("Analysis:"),
+             qPrintable(w.autoResult_->text()));
+    QCOMPARE(w.quality(), w.qualityAt(0.15));
+    QCOMPARE(w.resCombo_->currentData().toInt(), 0);
+    QCOMPARE(w.codec_->family, QString("h264"));   // not allowed to change it
+    qInfo().noquote() << plainText(w.autoResult_->text());
+
+    select(w.goalCombo_, false);   // best within 2 MB: too little for 720p at good quality
+    w.limitSpin_->setValue(2.0);
+    QVERIFY(analyze());
+    const QString text = w.autoResult_->text();
+    qInfo().noquote() << plainText(text);
+    QVERIFY2(text.contains("Best within 2.0 MB") || text.contains("Even at the smallest size"), qPrintable(text));
+    QVERIFY(w.resCombo_->currentData().toInt() != 0);   // a smaller picture
+    QVERIFY(w.estimatedBytes() <= 2.0 * MB);
+    if (text.contains("Best within"))
+        QVERIFY(w.quality() <= w.qualityAt(0.38));   // still good quality
+
+    w.allowCodecCheck_->setChecked(true);   // now it may pick a more efficient codec
+    select(w.goalCombo_, true);
+    QVERIFY(analyze());
+    QVERIFY2(w.codec_->family == "av1" || w.codec_->family == "hevc", qPrintable(w.codec_->family));
+    w.allowCodecCheck_->setChecked(false);
+    w.limitSpin_->setValue(10);
+    select(w.formatCombo_, "mp4");
+    select(w.vcodecCombo_, "h264");
+}
+
 // The end of a compression is shown in a colored box with what happened, until the next one starts.
 void TestVideoCompressor::showsTheOutcomeClearly()
 {
     MainWindow &w = *win_;
     QVERIFY(!compress(path("input.mp4"), "mp4", "h264", "off", {}, "aac").isEmpty());
     QVERIFY(w.outcomeBar_->isVisible());
-    QCOMPARE(w.outcomeTitle_->text(), QString("Compression complete"));
+    QCOMPARE(w.outcomeTitle_->text(), QString("Export complete"));
     QVERIFY2(w.outcomeText_->text().contains("out.mp4") && w.outcomeText_->text().contains("smaller than the original"),
              qPrintable(w.outcomeText_->text()));
     QVERIFY(w.playBtn_->isVisible() && w.openBtn_->isVisible() && w.openBtn_->isEnabled());
 
     w.limitSpin_->setValue(0.5);   // the file is bigger: still done, but it says so
     QVERIFY(!compress(path("input.mp4"), "mp4", "h264", "off", {}, "aac").isEmpty());
-    QCOMPARE(w.outcomeTitle_->text(), QString("Compression complete, but over the limit"));
+    QCOMPARE(w.outcomeTitle_->text(), QString("Export complete, but over the limit"));
     QVERIFY2(w.outcomeText_->text().contains("over the 0.5 MB limit"), qPrintable(w.outcomeText_->text()));
     w.limitSpin_->setValue(10);
 
@@ -806,7 +854,7 @@ void TestVideoCompressor::showsTheOutcomeClearly()
     w.start();
     QVERIFY(QTest::qWaitFor([&] { return !w.encoding_; }, 60000));
     QVERIFY(w.outcomeBar_->isVisible());
-    QCOMPARE(w.outcomeTitle_->text(), QString("Compression failed"));
+    QCOMPARE(w.outcomeTitle_->text(), QString("Export failed"));
     QVERIFY(!w.playBtn_->isVisible() && !w.openBtn_->isVisible());
 
     w.outEdit_->setText(path("out.mp4"));
@@ -848,12 +896,12 @@ void TestVideoCompressor::notifiesAboutUpdates()
         "tag_name": "v9.9.10",
         "html_url": "https://github.com/Andrea332/VideoCompressor/releases/tag/v9.9.10",
         "assets": [
-            {"name": "VideoCompressor-9.9.10-win64.zip", "browser_download_url": "https://example.com/a.zip"},
-            {"name": "VideoCompressor-9.9.10-win64.exe", "browser_download_url": "https://example.com/win64.exe",
+            {"name": "FrameStudio-9.9.10-win64.zip", "browser_download_url": "https://example.com/a.zip"},
+            {"name": "FrameStudio-9.9.10-win64.exe", "browser_download_url": "https://example.com/win64.exe",
              "digest": "sha256:ABCDEF0123"},
-            {"name": "VideoCompressor-9.9.10-win-arm64.exe", "browser_download_url": "https://example.com/win-arm64.exe",
+            {"name": "FrameStudio-9.9.10-win-arm64.exe", "browser_download_url": "https://example.com/win-arm64.exe",
              "digest": "sha256:ABCDEF4567"},
-            {"name": "VideoCompressor-9.9.10-macos-arm64.dmg", "browser_download_url": "https://example.com/a.dmg"}
+            {"name": "FrameStudio-9.9.10-macos-arm64.dmg", "browser_download_url": "https://example.com/a.dmg"}
         ]})";
     const auto info = UpdateChecker::parseLatestRelease(json, "9.9.9");
     QVERIFY(info);
@@ -861,7 +909,7 @@ void TestVideoCompressor::notifiesAboutUpdates()
     // the installer for the processor this build is for (x64 or ARM64)
     const QString platform = QString(UpdateChecker::INSTALLER_SUFFIX).chopped(4).mid(1);
     QVERIFY(platform == "win64" || platform == "win-arm64");
-    QCOMPARE(info->installerName, "VideoCompressor-9.9.10-" + platform + ".exe");
+    QCOMPARE(info->installerName, "FrameStudio-9.9.10-" + platform + ".exe");
     QCOMPARE(info->installerUrl, QUrl("https://example.com/" + platform + ".exe"));
     QCOMPARE(info->installerSha256, QString(platform == "win64" ? "abcdef0123" : "abcdef4567"));
     QVERIFY(!UpdateChecker::parseLatestRelease(json, "9.9.10"));
@@ -901,10 +949,10 @@ void TestVideoCompressor::keepsPortableSettingsNextToTheApp()
     const QString appDir = root.filePath("usr/bin");                        // top of the extracted folder
 #endif
     const QString ini = portableSettingsPath(appDir);
-    QCOMPARE(ini, QDir::cleanPath(root.filePath("VideoCompressor.ini")));
+    QCOMPARE(ini, QDir::cleanPath(root.filePath("FrameStudio.ini")));
 
     // the file of the packages (comments only) is read and then written like any settings file
-    QVERIFY(QFile::copy(QStringLiteral(SOURCE_DIR "/packaging/portable/VideoCompressor.ini"), ini));
+    QVERIFY(QFile::copy(QStringLiteral(SOURCE_DIR "/packaging/portable/FrameStudio.ini"), ini));
     QFile::setPermissions(ini, QFile::ReadOwner | QFile::WriteOwner);
     {
         QSettings settings(ini, QSettings::IniFormat);
@@ -1023,17 +1071,39 @@ void TestVideoCompressor::editsWithKeysAndMouse()
     key(Qt::Key_Escape);
     QVERIFY(!e.timeline_->hasSelection());
 
-    // drag the first piece (double-click selects it) after the last one
+    // the mouse: x of a time on the timeline, and a drag with one button
     Timeline &t = *e.timeline_;
     const auto x = [&](double time) { return int(8 + time * (t.width() - 16) / e.edits().duration()); };
+    const auto drag = [&](Qt::MouseButton button, int from, int to, int y = 40) {
+        QTest::mousePress(&t, button, Qt::NoModifier, QPoint(from, y));
+        for (int step = 1; step <= 4; ++step) {
+            const QPointF at(from + (to - from) * step / 4.0, y);
+            QMouseEvent move(QEvent::MouseMove, at, t.mapToGlobal(at), Qt::NoButton, button, Qt::NoModifier);
+            QApplication::sendEvent(&t, &move);
+        }
+        QTest::mouseRelease(&t, button, Qt::NoModifier, QPoint(to, y));
+    };
+
+    // left button: the playhead follows the mouse, the selection stays
+    e.timeline_->setSelection(0, 1);
+    drag(Qt::LeftButton, x(1.5), x(2.5), 10);
+    QVERIFY2(std::abs(e.playhead_ - 2.5) < 0.04, qPrintable(QString::number(e.playhead_)));
+    QCOMPARE(t.selectionEnd(), 1.0);
+    // right button: dragging selects, a click asks for the menu
+    drag(Qt::RightButton, x(1.5), x(3.0));
+    QVERIFY2(std::abs(t.selectionStart() - 1.5) < 0.04 && std::abs(t.selectionEnd() - 3.0) < 0.04,
+             qPrintable(QString("%1-%2").arg(t.selectionStart()).arg(t.selectionEnd())));
+    QObject::disconnect(&t, &Timeline::menuRequested, &e, nullptr);   // the menu would wait for a click
+    QSignalSpy menu(&t, &Timeline::menuRequested);
+    QTest::mouseClick(&t, Qt::RightButton, Qt::NoModifier, QPoint(x(1.0), 40));
+    QCOMPARE(menu.count(), 1);
+    QObject::connect(&t, &Timeline::menuRequested, &e, &Editor::showMenu);
+
+    // double-click selects the first piece; dragging it (away from the playhead) puts it after the last one
     QTest::mouseDClick(&t, Qt::LeftButton, Qt::NoModifier, QPoint(x(0.5), 40));
     QCOMPARE(t.selectionStart(), 0.0);
     QCOMPARE(t.selectionEnd(), 1.0);
-    QTest::mousePress(&t, Qt::LeftButton, Qt::NoModifier, QPoint(x(0.5), 40));
-    QMouseEvent move(QEvent::MouseMove, QPointF(x(4.0) - 1, 40), t.mapToGlobal(QPointF(x(4.0) - 1, 40)),
-                     Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(&t, &move);
-    QTest::mouseRelease(&t, Qt::LeftButton, Qt::NoModifier, QPoint(x(4.0) - 1, 40));
+    drag(Qt::LeftButton, x(0.25), x(4.0) - 1);
     QCOMPARE(e.edits().pieces(), (Pieces{{1, 2}, {4, 6}, {0, 1}}));
     QCOMPARE(t.selectionStart(), 3.0);                       // the moved piece stays selected
     key(Qt::Key_Z, Qt::ControlModifier);

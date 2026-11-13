@@ -9,7 +9,7 @@ QString portableSettingsPath(const QString &appDir)
 #if defined(Q_OS_WIN)
     const QString dir = appDir;
 #elif defined(Q_OS_MACOS)
-    const QString dir = appDir + "/../../..";   // VideoCompressor.app/Contents/MacOS: next to the app
+    const QString dir = appDir + "/../../..";   // FrameStudio.app/Contents/MacOS: next to the app
 #else
     const QString dir = appDir + "/../..";      // usr/bin: the top of the extracted folder
 #endif

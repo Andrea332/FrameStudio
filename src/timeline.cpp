@@ -104,9 +104,11 @@ double Timeline::timeAt(double x) const
     return std::clamp(scroll_ + (x - MARGIN) / pixelsPerSecond(), 0.0, duration());
 }
 
-double Timeline::snapped(double t) const
+double Timeline::snapped(double t, bool toPlayhead) const
 {
-    std::vector<double> magnets{0, duration(), playhead_};
+    std::vector<double> magnets{0, duration()};
+    if (toPlayhead)
+        magnets.push_back(playhead_);
     double position = 0;
     for (const Piece &p : pieces_)
         magnets.push_back(position += p.length());
@@ -193,10 +195,12 @@ void Timeline::paintEvent(QPaintEvent *)
     const double x = xAt(playhead_);
     p.setPen(QPen(red, 2));
     p.drawLine(QPointF(x, 0), QPointF(x, RULER + TRACK + KEYFRAMES));
-    QPainterPath head;
-    head.moveTo(x - 6, 0);
-    head.lineTo(x + 6, 0);
-    head.lineTo(x, 8);
+    QPainterPath head;   // the handle to grab it by
+    head.moveTo(x - 7, 0);
+    head.lineTo(x + 7, 0);
+    head.lineTo(x + 7, 7);
+    head.lineTo(x, 13);
+    head.lineTo(x - 7, 7);
     head.closeSubpath();
     p.fillPath(head, red);
     if (hasFocus()) {
@@ -289,30 +293,38 @@ void Timeline::paintPieces(QPainter &p)
 // ------------------------------------------------ mouse
 void Timeline::mousePressEvent(QMouseEvent *event)
 {
-    if (event->button() != Qt::LeftButton || duration() <= 0)
+    if (duration() <= 0)
         return;
     const double x = event->position().x();
     const double t = timeAt(x);
     pressX_ = x;
+    moved_ = false;
     dropAt_ = -1;
-    if (hasSelection() && std::abs(x - xAt(selFrom_)) <= EDGE_PIXELS) {
+    if (event->button() == Qt::RightButton) {   // a selection, or the menu if the mouse doesn't move
+        drag_ = Drag::Select;
+        anchor_ = snapped(t);
+        return;
+    }
+    if (event->button() != Qt::LeftButton)
+        return;
+    const bool nearPlayhead = std::abs(x - xAt(playhead_)) <= EDGE_PIXELS;
+    if (!nearPlayhead && hasSelection() && std::abs(x - xAt(selFrom_)) <= EDGE_PIXELS) {
         drag_ = Drag::StartEdge;
-    } else if (hasSelection() && std::abs(x - xAt(selTo_)) <= EDGE_PIXELS) {
+    } else if (!nearPlayhead && hasSelection() && std::abs(x - xAt(selTo_)) <= EDGE_PIXELS) {
         drag_ = Drag::EndEdge;
-    } else if (hasSelection() && t > selFrom_ && t < selTo_ && event->position().y() >= RULER) {
+    } else if (!nearPlayhead && hasSelection() && t > selFrom_ && t < selTo_ && event->position().y() >= RULER) {
         drag_ = Drag::Move;   // becomes a move once the mouse goes a few pixels
     } else if (event->modifiers() & Qt::ShiftModifier) {
         drag_ = Drag::Select;
         anchor_ = playhead_;
+        moved_ = true;
         setSelection(anchor_, snapped(t));
         emit selectionChanged();
-    } else {
-        drag_ = Drag::Select;
-        anchor_ = snapped(t);
-        setSelection(anchor_, anchor_);
-        emit selectionChanged();
-        setPlayhead(anchor_);
-        emit playheadDragged(anchor_);
+    } else {   // the playhead comes here and follows the mouse
+        drag_ = Drag::Scrub;
+        const double at = snapped(t, false);
+        setPlayhead(at);
+        emit playheadDragged(at);
     }
 }
 
@@ -320,16 +332,24 @@ void Timeline::mouseMoveEvent(QMouseEvent *event)
 {
     const double x = event->position().x();
     if (drag_ == Drag::None) {   // show what can be grabbed
+        const bool playhead = std::abs(x - xAt(playhead_)) <= EDGE_PIXELS;
         const bool edge = hasSelection() && (std::abs(x - xAt(selFrom_)) <= EDGE_PIXELS
                                              || std::abs(x - xAt(selTo_)) <= EDGE_PIXELS);
         const double t = timeAt(x);
         const bool inside = hasSelection() && t > selFrom_ && t < selTo_ && event->position().y() >= RULER;
-        setCursor(edge ? Qt::SizeHorCursor : inside ? Qt::OpenHandCursor : Qt::ArrowCursor);
+        setCursor(playhead || edge ? Qt::SizeHorCursor : inside ? Qt::OpenHandCursor : Qt::ArrowCursor);
         return;
     }
-    const double t = snapped(timeAt(x));
+    moved_ = moved_ || std::abs(x - pressX_) > 3;
+    const double t = snapped(timeAt(x), drag_ != Drag::Scrub);
     switch (drag_) {
+    case Drag::Scrub:
+        setPlayhead(t);
+        emit playheadDragged(t);
+        break;
     case Drag::Select:
+        if (!moved_)
+            break;
         setSelection(anchor_, t);
         emit selectionChanged();
         break;
@@ -359,12 +379,15 @@ void Timeline::mouseMoveEvent(QMouseEvent *event)
 
 void Timeline::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (event->button() != Qt::LeftButton)
-        return;
     const Drag drag = drag_;
     drag_ = Drag::None;
     setCursor(Qt::ArrowCursor);
-    if (drag != Drag::Move)
+    if (event->button() == Qt::RightButton) {
+        if (drag == Drag::Select && !moved_)
+            emit menuRequested(timeAt(event->position().x()), event->globalPosition().toPoint());
+        return;
+    }
+    if (event->button() != Qt::LeftButton || drag != Drag::Move)
         return;
     if (dropAt_ < 0) {   // a click inside the selection: move the playhead there
         const double t = snapped(timeAt(event->position().x()));
@@ -381,6 +404,8 @@ void Timeline::mouseReleaseEvent(QMouseEvent *event)
 
 void Timeline::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    if (event->button() != Qt::LeftButton)
+        return;
     const double t = timeAt(event->position().x());
     double position = 0;
     for (const Piece &piece : pieces_) {

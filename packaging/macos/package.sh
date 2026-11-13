@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates <build>/VideoCompressor-<version>-macos-arm64.dmg from a configured and built build folder:
+# Creates <build>/FrameStudio-<version>-macos-arm64.dmg from a configured and built build folder:
 # the app bundle with the Qt frameworks (macdeployqt), an ad-hoc signature and a disk image to drag it
 # into Applications; and the portable version, the same app in a zip: -macos-arm64-portable.zip
 #
@@ -9,8 +9,8 @@ set -euo pipefail
 build=$(cd "${1:-build}" && pwd)
 version=$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "$build/CMakeCache.txt")
 stage="$build/dmg"
-app="$stage/VideoCompressor.app"
-dmg="$build/VideoCompressor-$version-macos-arm64.dmg"
+app="$stage/FrameStudio.app"
+dmg="$build/FrameStudio-$version-macos-arm64.dmg"
 
 rm -rf "$stage"
 cmake --install "$build" --prefix "$stage"
@@ -23,13 +23,13 @@ codesign --verify --deep --strict --verbose=2 "$app"
 
 ln -s /Applications "$stage/Applications"
 rm -f "$dmg"
-hdiutil create -volname "Video Compressor" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$dmg"
+hdiutil create -volname "FrameStudio" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$dmg"
 
 echo "Created $dmg"
 
 # Portable version: the app in a zip, to run from any folder (ditto keeps the signature and the frameworks'
 # symbolic links)
-portable="$build/VideoCompressor-$version-macos-arm64-portable.zip"
+portable="$build/FrameStudio-$version-macos-arm64-portable.zip"
 rm -f "$portable"
 ditto -c -k --keepParent "$app" "$portable"
 echo "Created $portable"

@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-Builds Video Compressor with CMake, Ninja and MSVC; optionally runs the tests and creates the zip package.
+Builds FrameStudio with CMake, Ninja and MSVC; optionally runs the tests and creates the zip package.
 
 .EXAMPLE
-.\build.ps1              # build (build\VideoCompressor.exe)
+.\build.ps1              # build (build\FrameStudio.exe)
 .\build.ps1 -Test        # build and run the tests
 .\build.ps1 -Package     # build and create, in build\, the installer (if Inno Setup is installed) and the zip
 #>

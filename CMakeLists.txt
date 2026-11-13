@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.21...3.31)
 
-project(VideoCompressor VERSION 2.4.0 DESCRIPTION "Compress videos with a preview of the final size" LANGUAGES CXX)
+# FrameStudio was called Video Compressor up to version 2.4
+project(FrameStudio VERSION 3.0.0 DESCRIPTION "Edit and export videos, with a preview of the final size" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +11,7 @@ qt_standard_project_setup()
 
 # Everything except main(), so that the tests can use it too
 add_library(vc_core STATIC
+    src/autosettings.cpp
     src/codecs.cpp src/codecs.h
     src/editlist.cpp src/editlist.h
     src/editor.cpp src/editor.h
@@ -27,7 +29,7 @@ add_library(vc_core STATIC
 target_include_directories(vc_core PUBLIC src)
 target_link_libraries(vc_core PUBLIC Qt6::Widgets Qt6::Network Qt6::Multimedia)
 
-# Processor of the Windows build, in the package names (VideoCompressor-2.4.0-win64.exe or -win-arm64.exe):
+# Processor of the Windows build, in the package names (FrameStudio-3.0.0-win64.exe or -win-arm64.exe):
 # the update check downloads the installer for the same one
 if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID MATCHES "ARM64")
     set(WINDOWS_PLATFORM win-arm64)
@@ -42,7 +44,7 @@ else()
 endif()
 
 qt_add_executable(video_compressor WIN32 MACOSX_BUNDLE src/main.cpp)
-set_target_properties(video_compressor PROPERTIES OUTPUT_NAME VideoCompressor)
+set_target_properties(video_compressor PROPERTIES OUTPUT_NAME FrameStudio)
 target_link_libraries(video_compressor PRIVATE vc_core)
 target_compile_definitions(video_compressor PRIVATE APP_VERSION="${PROJECT_VERSION}")
 if(WIN32)
@@ -54,8 +56,8 @@ elseif(APPLE)
     target_sources(video_compressor PRIVATE resources/icon.icns)
     set_source_files_properties(resources/icon.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     set_target_properties(video_compressor PROPERTIES
-        MACOSX_BUNDLE_BUNDLE_NAME "Video Compressor"
-        MACOSX_BUNDLE_GUI_IDENTIFIER io.github.andrea332.videocompressor
+        MACOSX_BUNDLE_BUNDLE_NAME "FrameStudio"
+        MACOSX_BUNDLE_GUI_IDENTIFIER io.github.andrea332.framestudio
         MACOSX_BUNDLE_ICON_FILE icon.icns
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
@@ -94,11 +96,11 @@ if(WIN32)
     set(APP_BIN_DIR .)
     set(APP_DATA_DIR .)
 elseif(APPLE)
-    set(APP_BIN_DIR VideoCompressor.app/Contents/MacOS)
-    set(APP_DATA_DIR VideoCompressor.app/Contents/Resources)
+    set(APP_BIN_DIR FrameStudio.app/Contents/MacOS)
+    set(APP_DATA_DIR FrameStudio.app/Contents/Resources)
 else()
     set(APP_BIN_DIR bin)
-    set(APP_DATA_DIR share/doc/videocompressor)
+    set(APP_DATA_DIR share/doc/framestudio)
 endif()
 
 # FFmpeg to bundle: the ffmpeg/ folder of the project (see ci/get_ffmpeg.py), otherwise the one in PATH.
@@ -156,17 +158,17 @@ if(WIN32)
     include(InstallRequiredSystemLibraries)
 
     # Packages: a portable zip and, if Inno Setup is installed, an installer
-    set(CPACK_VERBATIM_VARIABLES ON)   # values like {app}\VideoCompressor.exe are written as they are
-    set(CPACK_PACKAGE_NAME "Video Compressor")
+    set(CPACK_VERBATIM_VARIABLES ON)   # values like {app}\FrameStudio.exe are written as they are
+    set(CPACK_PACKAGE_NAME "FrameStudio")
     set(CPACK_PACKAGE_VENDOR "Andrea Galet")
-    set(CPACK_PACKAGE_FILE_NAME "VideoCompressor-${PROJECT_VERSION}-${WINDOWS_PLATFORM}")
+    set(CPACK_PACKAGE_FILE_NAME "FrameStudio-${PROJECT_VERSION}-${WINDOWS_PLATFORM}")
     set(CPACK_SYSTEM_NAME "${WINDOWS_PLATFORM}")
-    set(CPACK_PACKAGE_INSTALL_DIRECTORY "Video Compressor")
-    set(CPACK_PACKAGE_EXECUTABLES VideoCompressor "Video Compressor")   # Start menu shortcut
-    set(CPACK_CREATE_DESKTOP_LINKS VideoCompressor)
+    set(CPACK_PACKAGE_INSTALL_DIRECTORY "FrameStudio")
+    set(CPACK_PACKAGE_EXECUTABLES FrameStudio "FrameStudio")   # Start menu shortcut
+    set(CPACK_CREATE_DESKTOP_LINKS FrameStudio)
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
     set(CPACK_GENERATOR ZIP)
-    # the zip is the portable version (VideoCompressor-<version>-win64-portable.zip)
+    # the zip is the portable version (FrameStudio-<version>-win64-portable.zip)
     set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_SOURCE_DIR}/packaging/windows/cpack_options.cmake")
     set(CPACK_PORTABLE_FILES_DIR "${CMAKE_SOURCE_DIR}/packaging/portable")
 
@@ -189,12 +191,13 @@ if(WIN32)
         set(CPACK_INNOSETUP_LANGUAGES english italian)
         set(CPACK_INNOSETUP_IGNORE_LICENSE_PAGE ON)            # MIT: no need to accept anything
         set(CPACK_INNOSETUP_PROGRAM_MENU_FOLDER .)             # shortcut directly in the Start menu
-        set(CPACK_INNOSETUP_RUN_EXECUTABLES VideoCompressor)   # "Launch Video Compressor" at the end
-        set(CPACK_INNOSETUP_EXTRA_SCRIPTS "${CMAKE_SOURCE_DIR}/packaging/windows/relaunch.iss")
+        set(CPACK_INNOSETUP_RUN_EXECUTABLES FrameStudio)   # "Launch FrameStudio" at the end
+        set(CPACK_INNOSETUP_EXTRA_SCRIPTS "${CMAKE_SOURCE_DIR}/packaging/windows/relaunch.iss"
+                                          "${CMAKE_SOURCE_DIR}/packaging/windows/previous_name.iss")
         # never change the AppId: it is how a newer version recognizes and updates the installed one
         set(CPACK_INNOSETUP_SETUP_AppId "{{74688896-6251-4C9E-BFE5-A7BEB66AF920}")
-        set(CPACK_INNOSETUP_SETUP_AppVerName "Video Compressor ${PROJECT_VERSION}")
-        set(CPACK_INNOSETUP_SETUP_UninstallDisplayIcon "{app}\\VideoCompressor.exe")
+        set(CPACK_INNOSETUP_SETUP_AppVerName "FrameStudio ${PROJECT_VERSION}")
+        set(CPACK_INNOSETUP_SETUP_UninstallDisplayIcon "{app}\\FrameStudio.exe")
         set(CPACK_INNOSETUP_SETUP_MinVersion "10.0")
         # installs for the current user without admin rights; "all users" can be chosen in the first page
         set(CPACK_INNOSETUP_SETUP_PrivilegesRequired lowest)
@@ -211,6 +214,6 @@ elseif(APPLE)
 else()
     # the AppImage is made by packaging/linux/package.sh (linuxdeploy)
     install(TARGETS video_compressor RUNTIME DESTINATION bin)
-    install(FILES packaging/linux/videocompressor.desktop DESTINATION share/applications)
-    install(FILES resources/icon.png DESTINATION share/icons/hicolor/256x256/apps RENAME videocompressor.png)
+    install(FILES packaging/linux/framestudio.desktop DESTINATION share/applications)
+    install(FILES resources/icon.png DESTINATION share/icons/hicolor/256x256/apps RENAME framestudio.png)
 endif()

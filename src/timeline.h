@@ -9,8 +9,9 @@
 #include <vector>
 
 // The edited video as a strip of pieces with frame thumbnails, the playhead, the selection and the keyframes
-// of the source. Click to move the playhead, drag to select (Shift+click extends), drag the selection or its
-// edges to move or resize it, double-click to select a piece, Ctrl+wheel to zoom, wheel to scroll.
+// of the source. Left button: click or drag to move the playhead (the video follows), drag the selection or its
+// edges to move or resize it, Shift+click to extend it, double-click to select a piece. Right button: drag to
+// select, click for the menu. Ctrl+wheel zooms, the wheel scrolls.
 class Timeline : public QWidget
 {
     Q_OBJECT
@@ -42,6 +43,7 @@ signals:
     void playheadDragged(double t);                        // by the user
     void selectionChanged();
     void moveRequested(double from, double to, double at);
+    void menuRequested(double t, const QPoint &globalPos);  // right click without dragging
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -53,13 +55,14 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private:
-    enum class Drag { None, Select, StartEdge, EndEdge, Move };
+    enum class Drag { None, Scrub, Select, StartEdge, EndEdge, Move };
 
     double duration() const;
     double pixelsPerSecond() const;
     double timeAt(double x) const;
     double xAt(double t) const;
-    double snapped(double t) const;   // to piece edges and the playhead when close, otherwise to frames
+    double snapped(double t, bool toPlayhead = true) const;   // to piece edges (and the playhead) when close,
+                                                              // otherwise to frames
     void clampScroll();
     void paintRuler(QPainter &p);
     void paintPieces(QPainter &p);
@@ -76,5 +79,6 @@ private:
     Drag drag_ = Drag::None;
     double anchor_ = 0;                 // time where a selection drag started
     double pressX_ = 0;
+    bool moved_ = false;                // the mouse went a few pixels since it was pressed
     double dropAt_ = -1;                // where the selection being moved would go
 };

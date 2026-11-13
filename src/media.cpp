@@ -52,8 +52,8 @@ std::optional<MediaInfo> probe(const QString &ffprobe, const QString &path, QStr
 
     QProcess proc;
     proc.start(ffprobe, {"-v", "error", "-show_entries",
-                         "stream=index,codec_type,width,height,avg_frame_rate,r_frame_rate,duration:"
-                         "stream_disposition=attached_pic:stream_side_data=rotation:format=duration,start_time",
+                         "stream=index,codec_type,width,height,avg_frame_rate,r_frame_rate,duration,channels,bit_rate:"
+                         "stream_disposition=attached_pic:stream_side_data=rotation:format=duration,start_time,bit_rate",
                          "-of", "json", path});
     if (!proc.waitForFinished(60000))
         return fail("ffprobe did not respond");
@@ -64,12 +64,12 @@ std::optional<MediaInfo> probe(const QString &ffprobe, const QString &path, QStr
 
     const QJsonObject info = QJsonDocument::fromJson(proc.readAllStandardOutput()).object();
     const QJsonArray streams = info.value("streams").toArray();
-    QJsonObject video;
-    bool hasAudio = false;
+    QJsonObject video, audio;
     for (const QJsonValue &value : streams) {
         const QJsonObject s = value.toObject();
         const QString type = s.value("codec_type").toString();
-        hasAudio |= type == "audio";
+        if (type == "audio" && audio.isEmpty())
+            audio = s;
         // cover art is reported as a one-frame video stream: skip it
         if (type == "video" && video.isEmpty() && !s.value("disposition").toObject().value("attached_pic").toInt())
             video = s;
@@ -107,7 +107,12 @@ std::optional<MediaInfo> probe(const QString &ffprobe, const QString &path, QStr
     m.fps = parseRate(video.value("avg_frame_rate").toString());
     if (m.fps == 0)
         m.fps = parseRate(video.value("r_frame_rate").toString());
-    m.hasAudio = hasAudio;
+    m.hasAudio = !audio.isEmpty();
+    m.audioChannels = audio.value("channels").toInt();
+    m.audioKbps = int(audio.value("bit_rate").toString().toDouble() / 1000);
+    const QString videoRate = video.value("bit_rate").toString();
+    m.videoKbps = int((videoRate.isEmpty() ? info.value("format").toObject().value("bit_rate").toString() : videoRate)
+                          .toDouble() / 1000);
     m.size = file.size();
     return m;
 }

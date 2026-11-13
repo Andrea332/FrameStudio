@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Creates <build>/VideoCompressor-<version>-linux-<x86_64|aarch64>.AppImage, for the processor of this
+# Creates <build>/FrameStudio-<version>-linux-<x86_64|aarch64>.AppImage, for the processor of this
 # machine, from a configured and built build folder, with linuxdeploy and its Qt plugin (downloaded into
 # <build>/tools if missing); and the portable version, the same files in a folder:
-# <build>/VideoCompressor-<version>-linux-<arch>-portable.tar.gz
+# <build>/FrameStudio-<version>-linux-<arch>-portable.tar.gz
 #
 # Usage:  QMAKE=/path/to/Qt/bin/qmake packaging/linux/package.sh [build]
 set -euo pipefail
@@ -32,7 +32,7 @@ qt_libs=$("${QMAKE:?set QMAKE to the qmake of Qt}" -query QT_INSTALL_LIBS)
 export LD_LIBRARY_PATH="$qt_libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export APPIMAGE_EXTRACT_AND_RUN=1     # build machines often have no FUSE
 export ARCH="$arch"                   # which AppImage runtime to embed
-export LDAI_OUTPUT="$build/VideoCompressor-$version-linux-$arch.AppImage"
+export LDAI_OUTPUT="$build/FrameStudio-$version-linux-$arch.AppImage"
 export OUTPUT="$LDAI_OUTPUT"
 # native on Wayland desktops, not only through XWayland (the plugin names change between Qt versions)
 qt_platforms="$("$QMAKE" -query QT_INSTALL_PLUGINS)/platforms"
@@ -43,9 +43,9 @@ fi
 echo "Wayland platform plugins: ${wayland:-none}"
 
 "linuxdeploy-$arch.AppImage" --appdir "$appdir" \
-    --executable "$appdir/usr/bin/VideoCompressor" \
-    --desktop-file "$appdir/usr/share/applications/videocompressor.desktop" \
-    --icon-file "$appdir/usr/share/icons/hicolor/256x256/apps/videocompressor.png" \
+    --executable "$appdir/usr/bin/FrameStudio" \
+    --desktop-file "$appdir/usr/share/applications/framestudio.desktop" \
+    --icon-file "$appdir/usr/share/icons/hicolor/256x256/apps/framestudio.png" \
     --plugin qt --output appimage
 
 echo "Created $LDAI_OUTPUT"
@@ -55,11 +55,11 @@ glibc=$(find "$appdir" -type f \( -name '*.so*' -o -path '*/bin/*' \) -exec objd
 echo "Needs ${glibc:-an unknown glibc version}"
 
 # Portable version: the folder the AppImage is made of, to extract and run anywhere (no FUSE needed).
-# VideoCompressor.ini at its top makes the app keep its settings there instead of in ~/.config.
-portable="VideoCompressor-$version-linux-$arch-portable"
+# FrameStudio.ini at its top makes the app keep its settings there instead of in ~/.config.
+portable="FrameStudio-$version-linux-$arch-portable"
 rm -rf "${build:?}/$portable"
 cp -a "$appdir" "$build/$portable"
-ln -s AppRun "$build/$portable/VideoCompressor"
-cp "$root/packaging/portable/VideoCompressor.ini" "$build/$portable/"
+ln -s AppRun "$build/$portable/FrameStudio"
+cp "$root/packaging/portable/FrameStudio.ini" "$build/$portable/"
 tar -C "$build" -czf "$build/$portable.tar.gz" "$portable"
 echo "Created $build/$portable.tar.gz"

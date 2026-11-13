@@ -16,12 +16,12 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "FileDescription", "Video Compressor"
+            VALUE "FileDescription", "FrameStudio"
             VALUE "FileVersion", "@PROJECT_VERSION@"
-            VALUE "InternalName", "VideoCompressor"
+            VALUE "InternalName", "FrameStudio"
             VALUE "LegalCopyright", "Copyright (c) 2026 Andrea Galet. MIT License."
-            VALUE "OriginalFilename", "VideoCompressor.exe"
-            VALUE "ProductName", "Video Compressor"
+            VALUE "OriginalFilename", "FrameStudio.exe"
+            VALUE "ProductName", "FrameStudio"
             VALUE "ProductVersion", "@PROJECT_VERSION@"
         END
     END

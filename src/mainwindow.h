@@ -103,8 +103,8 @@ private:
     void onEstimateFailed(const QString &message);
     void updateLimitStatus();
 
-    // fit to limit
-    void fitToLimit();
+    // fit to limit (bestAllowed: don't go above this quality, e.g. no visible loss)
+    void fitToLimit(std::optional<int> bestAllowed = std::nullopt);
     void setQuality(int value);
     void setBitrate(int kbps);
     void fitStep();
@@ -120,7 +120,7 @@ private:
     void start();
     void pickCopyOutput();
     void saveCopy(const QString &out);
-    enum class Job { Compress, Copy };
+    enum class Job { Export, Copy };
     void runFfmpeg(const QStringList &args, const QString &out, double duration, Job job);
     void onStdout();
     void onStderr();
@@ -130,6 +130,23 @@ private:
     void fitToContent();
     enum class Outcome { Done, OverLimit, Failed };
     void showOutcome(Outcome outcome, const QString &text, const QString &title = {});
+
+    // automatic settings (autosettings.cpp)
+    struct Auto {
+        bool smallest = false;                         // the goal: smallest with no visible loss, or best within limit
+        std::vector<std::pair<int, int>> candidates;   // resolution and frame rate to try, in order (0: original)
+        size_t next = 0;
+        bool fitting = false;                          // a size was chosen: the quality is being fitted to the limit
+        bool reachedGood = true;
+        QString content;                               // what the analysis found
+    };
+    int qualityAt(double fraction) const;              // a value on the encoder's scale, from best (0) to worst (1)
+    void analyze();
+    void applyAutoCandidate();
+    void autoStep();
+    void finishAuto();
+    void stopAuto(const QString &why);
+    QString describeContent() const;
 
     // updates
     void checkForUpdates(bool manual);
@@ -159,6 +176,7 @@ private:
     std::optional<double> estBps_;        // estimated bytes/s of the video track
     bool estExact_ = false;
     std::optional<Fit> fit_;              // state of the "Fit to limit" search
+    std::optional<Auto> auto_;            // state of the analyzer
     QHash<QString, std::pair<double, bool>> estCache_;   // video settings -> bytes/s already estimated
     std::optional<QString> pendingKey_;
     bool programmatic_ = false;
@@ -169,7 +187,7 @@ private:
     QProcess *previewProc_ = nullptr;   // extracts the preview frame of the source video
     int previewGen_ = 0;                // discards frames of videos that are no longer loaded
     QString currentOutput_;
-    Job job_ = Job::Compress;
+    Job job_ = Job::Export;
     double jobDuration_ = 0;              // of the file being written, for the progress
     std::unique_ptr<QTemporaryDir> copyDir_;   // the list of pieces for the copy without re-encoding
     QElapsedTimer encodeClock_;
@@ -217,6 +235,11 @@ private:
     QComboBox *abitrateCombo_;
     QComboBox *speedCombo_;
     QComboBox *keyintCombo_;
+    QGroupBox *autoBox_;
+    QComboBox *goalCombo_;
+    QCheckBox *allowCodecCheck_;
+    QPushButton *analyzeBtn_;
+    QLabel *autoResult_;
     QFormLayout *settingsForm_;
     QGroupBox *settingsBox_;
     QLabel *sizeLabel_;
