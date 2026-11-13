@@ -96,7 +96,9 @@ std::optional<MediaInfo> probe(const QString &ffprobe, const QString &path, QStr
     for (const QJsonValue &sideData : video.value("side_data_list").toArray()) {
         const QJsonObject d = sideData.toObject();
         if (d.contains("rotation")) {
-            if (std::lround(std::abs(d.value("rotation").toDouble())) % 180 == 90)
+            // FFmpeg gives the rotation counterclockwise
+            m.rotation = int((360 - std::lround(d.value("rotation").toDouble()) % 360) % 360);
+            if (m.rotation % 180 == 90)
                 std::swap(m.width, m.height);
             break;
         }

@@ -304,6 +304,7 @@ void TestVideoCompressor::probesTrickyInputs()
     QVERIFY2(rotated, qPrintable(error));
     QCOMPARE(rotated->width, 720);    // as displayed
     QCOMPARE(rotated->height, 1280);
+    QCOMPARE(rotated->rotation, 270); // made with -display_rotation 90, which is counterclockwise
 
     const auto cover = probe(ffprobe_, path("cover.mp4"), &error);
     QVERIFY(cover);

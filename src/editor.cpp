@@ -262,6 +262,7 @@ void Editor::setMedia(const std::optional<MediaInfo> &media)
     thumbsStarted_ = false;
     playhead_ = 0;
     view_->clear();
+    view_->setRotation(media ? media->rotation : 0);
     timeline_->clearThumbnails();
     timeline_->setKeyframes({});
     timeline_->setSelection(0, 0);

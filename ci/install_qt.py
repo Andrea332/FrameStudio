@@ -23,6 +23,8 @@ from pathlib import Path
 
 REPOSITORY = "https://download.qt.io/online/qtsdkrepository"
 MODULES = {"qtbase", "qtsvg", "qttools", "qttranslations", "qtwayland", "icu"}   # in Qt's main package
+if sys.platform != "win32":
+    MODULES.add("qtdeclarative")   # Qt Quick: Qt Multimedia's FFmpeg player needs it on Linux and macOS
 ADDONS = ["qtmultimedia"]   # packages of their own: qt.qt6.<version>.addons.<name>.<platform>
 
 
@@ -91,8 +93,10 @@ def main():
         install(repo, index, name, modules, prefix, version, folder)
     # The app plays videos with Qt Multimedia's FFmpeg backend. On Linux there is also a GStreamer one, which
     # needs GStreamer installed: the AppImage would have to carry it (linuxdeploy stops if it's missing).
-    for plugin in (prefix / "plugins" / "multimedia").glob("libgstreamermediaplugin*"):
-        plugin.unlink()
+    # Its CMake files go too, or CMake looks for it.
+    for unused in [*(prefix / "plugins" / "multimedia").glob("libgstreamermediaplugin*"),
+                   *(prefix / "lib" / "cmake" / "Qt6Multimedia").glob("Qt6QGstreamerMediaPlugin*.cmake")]:
+        unused.unlink()
     print(prefix.as_posix())
 
 

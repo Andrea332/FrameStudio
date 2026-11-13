@@ -18,6 +18,7 @@ public:
     QVideoSink *sink() const { return sink_; }
     const QImage &frame() const { return frame_; }   // the last frame received
     void clear();
+    void setRotation(int degreesClockwise) { rotation_ = degreesClockwise; }
 
 signals:
     void frameShown();
@@ -30,4 +31,5 @@ private:
 
     QVideoSink *sink_;
     QImage frame_;
+    int rotation_ = 0;
 };

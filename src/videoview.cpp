@@ -1,6 +1,7 @@
 #include "videoview.h"
 
 #include <QPainter>
+#include <QTransform>
 #include <QVideoFrame>
 #include <QVideoSink>
 
@@ -23,7 +24,11 @@ void VideoView::onFrame(const QVideoFrame &frame)
 {
     if (!frame.isValid())
         return;
-    frame_ = frame.toImage();   // as displayed: the rotation of phone videos is applied
+    frame_ = frame.toImage();
+    // phone videos: Qt usually turns the image upright itself, but not always (it depends on how the frame
+    // was decoded). If it still has the stored shape, turn it here.
+    if (rotation_ % 180 == 90 && frame_.size() == frame.size())
+        frame_ = frame_.transformed(QTransform().rotate(rotation_));
     update();
     emit frameShown();
 }
