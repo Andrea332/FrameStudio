@@ -337,7 +337,11 @@ void Editor::setMedia(const std::optional<MediaInfo> &media)
     timeline_->setSelection(0, 0);
     timeline_->zoomToFit();
     timeline_->setFrameDuration(media && media->fps > 0 ? 1 / media->fps : 1.0 / 30);
-    player_->setSource(media ? QUrl::fromLocalFile(media->path) : QUrl());
+    // the player opens the video only once the Editor is shown: exporting alone needs no decoding (and closing
+    // the window while the player is still opening a video could hang in the hardware decoder of a virtual Mac)
+    player_->setSource(QUrl());
+    if (media && isVisible())
+        player_->setSource(QUrl::fromLocalFile(media->path));
     editsUpdated();
     if (media)
         readKeyframes();
@@ -356,6 +360,8 @@ void Editor::showEvent(QShowEvent *event)
     QWidget::showEvent(event);
     for (QShortcut *s : std::as_const(shortcuts_))
         s->setEnabled(true);
+    if (media_ && player_->source().isEmpty())
+        player_->setSource(QUrl::fromLocalFile(media_->path));   // then it shows the frame at the playhead
     if (keyframesReady_ && !thumbsStarted_)
         nextThumbnail();
 }
@@ -403,7 +409,7 @@ void Editor::seek(double t)
     played.setPieces(playPieces_);
     const auto [index, source] = played.locate(playhead_);
     playing_ = index;
-    if (index < 0)
+    if (index < 0 || player_->source().isEmpty())   // not opened yet: it goes to the playhead once it is
         return;
     if (player_->playbackState() == QMediaPlayer::StoppedState)
         player_->pause();   // a paused player shows the frame it is on

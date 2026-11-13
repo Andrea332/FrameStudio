@@ -992,6 +992,7 @@ void TestVideoCompressor::survivesClosingWhileBusy()
         QTest::qWait(delayMs);
         QVERIFY(window->previewProc_ || window->estTimer_->isActive() || window->estimator_->running()
                 || delayMs > 0);
+        QVERIFY(window->editor_->player_->source().isEmpty());   // the Editor wasn't shown: no video opened
     }
 }
 
