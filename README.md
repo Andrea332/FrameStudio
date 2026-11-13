@@ -12,16 +12,16 @@ Video Compressor updates itself to FrameStudio.
 
 <p align="center">
   <!-- taken automatically for every release (see .github/workflows/build.yml): this is always the latest one -->
-  <img src="https://github.com/Andrea332/VideoCompressor/releases/latest/download/FrameStudio-screenshot.png"
+  <img src="https://github.com/Andrea332/FrameStudio/releases/latest/download/FrameStudio-screenshot.png"
        alt="FrameStudio with a video loaded: preview frame, automatic settings, settings and estimated output size" width="640">
 </p>
 
 ## Download
 
-**[Download the latest version](https://github.com/Andrea332/VideoCompressor/releases/latest)**
+**[Download the latest version](https://github.com/Andrea332/FrameStudio/releases/latest)**
 for Windows (x64 or ARM64), macOS (Apple Silicon) or Linux (x86_64 or ARM64).
 Previous versions and the changes in each one are on the
-[releases page](https://github.com/Andrea332/VideoCompressor/releases).
+[releases page](https://github.com/Andrea332/FrameStudio/releases).
 FFmpeg is included in every download: there is nothing else to install.
 
 Every system also has a **portable** version (the files ending in
@@ -105,8 +105,10 @@ It keeps its settings in `FrameStudio.ini` in that folder instead of in
   settings. This makes the estimate work well with any kind of content (screen
   recordings, camera footage, animations…). Videos up to 20 seconds are
   encoded whole, so the estimate is exact.
-- **Fit quality to limit**: enter a maximum size in MB and the app
-  automatically searches for the highest quality that stays under it.
+- **Fit quality to limit**: enter a maximum size in MB (in *Automatic
+  settings*, with the goal *Best quality within the limit*) and the app
+  searches for the highest quality that stays under it, keeping your other
+  settings.
 - **Constant quality or a bitrate of your choice**: by default the encoder
   keeps the chosen quality and spends the bits each scene needs, which gives the
   best quality for the size. You can instead set the video bitrate in kbps,
@@ -176,15 +178,16 @@ At the top of the **Export** tab, choose a goal and click **Analyze and
 apply**:
 
 - **Best quality within the limit**: the app looks for the settings that stay
-  under the limit you set (below, in MB) and look as good as possible. It tries
+  under the limit you set (right below the goal, in MB) and look as good as
+  possible. It tries
   the original size and frame rate, then lower ones (30 fps first, then a
   smaller picture), each at a good quality, and keeps the first that fits;
   then it raises the quality as far as the limit allows. A smaller picture that
   looks clean is better than the original size full of compression artifacts.
 - **Smallest file with no visible loss**: the original size and frame rate at
   the quality where the result still looks like the original, whatever the
-  limit. If the video is already well compressed and exporting it would save
-  little, it says so.
+  limit (which is then hidden). If the video is already well compressed and
+  exporting it would save little, it says so.
 
 Either way the sound gets a bitrate that suits its channels (mono, stereo or
 surround), never more than the original. The analysis also tells what it
@@ -198,7 +201,7 @@ some older devices. Changing any setting by hand while it works stops it.
 
 <p align="center">
   <!-- taken automatically for every release, like the picture at the top -->
-  <img src="https://github.com/Andrea332/VideoCompressor/releases/latest/download/FrameStudio-editor.png"
+  <img src="https://github.com/Andrea332/FrameStudio/releases/latest/download/FrameStudio-editor.png"
        alt="The Editor tab: video preview, playback controls, the timeline with three pieces, and the editing buttons" width="640">
 </p>
 
@@ -213,7 +216,15 @@ With the mouse:
   extends the selection, double-click selects a piece.
 - **Right button**: drag to select a part; a click opens a menu with cut,
   copy, paste, delete, split and the other actions.
-- Ctrl+wheel zooms in on the timeline, the wheel scrolls it.
+- **Ctrl+wheel** zooms in on the timeline (also the − / + / Fit buttons). Zoomed
+  in, the wheel moves back and forth along the video, and a thin bar appears
+  under the timeline: it shows the whole video, with the part on screen as a box
+  that you can drag (or click elsewhere on the bar to jump there). The
+  thumbnails follow the zoom: each one is the frame actually under it.
+
+Under the timeline the buttons are grouped by what they work on: **At the
+playhead** (Split, Paste) and **Selection** (Start, End, Cut, Copy, Delete; the
+title shows how long the selection is), then Undo and Redo.
 
 Every action also has a key, which works anywhere in the Editor tab:
 

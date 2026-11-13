@@ -3,6 +3,7 @@
 #include "editlist.h"
 #include "media.h"
 
+#include <QSet>
 #include <QWidget>
 
 #include <optional>
@@ -10,6 +11,7 @@
 
 class QAbstractButton;
 class QAudioOutput;
+class QGroupBox;
 class QLabel;
 class QMediaPlayer;
 class QProcess;
@@ -18,6 +20,7 @@ class QShortcut;
 class QTimer;
 class QToolButton;
 class Timeline;
+class TimelineOverview;
 class VideoView;
 
 // The Editor tab: plays the source video and edits it as a list of pieces (cut, copy, paste, delete, split,
@@ -80,8 +83,11 @@ private:
     void updateActions();
 
     // thumbnails and keyframes, read with FFmpeg in the background
+    void seekDone();
     void readKeyframes();
+    void wantThumbnails(const QList<double> &sourceTimes);
     void nextThumbnail();
+    void startThumbnail(double sourceTime, bool exact);
 
     QString ffmpeg_;
     QString ffprobe_;
@@ -94,22 +100,28 @@ private:
     double playhead_ = 0;
     int playing_ = -1;                            // index in playPieces_ while playing
     double jumpTarget_ = -1;                      // source time being sought to, until the player gets there
+    qint64 nextSeek_ = -1;                        // paused: where to go once the frame being looked for is shown
     bool busy_ = false;
 
     std::vector<double> keyframes_;
     std::vector<std::pair<double, double>> packets_;   // presentation and decoding time of each frame, by the first
     bool keyframesReady_ = false;
     QProcess *keyframeProc_ = nullptr;
-    QProcess *thumbProc_ = nullptr;
-    std::vector<double> thumbQueue_;              // source times still to read
+    QList<QProcess *> thumbProcs_;                // reading thumbnails, two at a time
+    std::vector<double> thumbQueue_;              // source times still to read: keyframes spread over the video
+    std::vector<double> wantedThumbs_;            // frames the zoomed-in timeline shows: read first
+    QSet<qint64> requestedThumbs_;                // in milliseconds, so that none is read twice
     bool thumbsStarted_ = false;
     int gen_ = 0;                                 // discards results for a video that is no longer loaded
 
     QMediaPlayer *player_;
     QAudioOutput *audio_;
     QTimer *playTimer_;
+    QTimer *seekTimer_;                           // paused: runs while the player looks for a frame
     VideoView *view_;
     Timeline *timeline_;
+    TimelineOverview *overview_;
+    QGroupBox *selectionBox_;
     QToolButton *playBtn_;
     QToolButton *muteBtn_;
     QLabel *timeLabel_;

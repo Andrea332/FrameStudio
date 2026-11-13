@@ -4,6 +4,7 @@
 #include "videoview.h"
 
 #include <QAudioOutput>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
@@ -21,12 +22,14 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <utility>
 #include <cmath>
 
 namespace {
 
 constexpr int MAX_THUMBNAILS = 48;
 constexpr int THUMBNAIL_HEIGHT = 112;   // pixels: sharp on the timeline also on high-density screens
+constexpr int THUMBNAIL_PROCESSES = 2;
 
 qint64 milliseconds(double seconds)
 {
@@ -88,6 +91,16 @@ Editor::Editor(const QString &ffmpeg, const QString &ffprobe, QWidget *parent)
     playTimer_ = new QTimer(this);
     playTimer_->setInterval(15);
     connect(playTimer_, &QTimer::timeout, this, &Editor::onPlayTick);
+    // paused, a new position interrupts the frame the player is still decoding: while the playhead is dragged,
+    // hardly any frame would appear. So one at a time, and the next (the latest position) when it is shown.
+    seekTimer_ = new QTimer(this);
+    seekTimer_->setSingleShot(true);
+    seekTimer_->setInterval(400);   // in case no frame comes (e.g. the same position again)
+    connect(seekTimer_, &QTimer::timeout, this, &Editor::seekDone);
+    connect(view_, &VideoView::frameShown, this, [this] {
+        if (seekTimer_->isActive())
+            seekDone();
+    });
     connect(player_, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
         if (status == QMediaPlayer::LoadedMedia)
             seek(playhead_);   // shows the frame at the playhead
@@ -151,8 +164,9 @@ Editor::Editor(const QString &ffmpeg, const QString &ffprobe, QWidget *parent)
     timeline_ = new Timeline;
     timeline_->setToolTip("Left button: click or drag to move the playhead, drag the selection to move it.\n"
                           "Right button: drag to select, click for the menu. Double-click selects a piece.\n"
-                          "Ctrl+wheel zooms, the wheel scrolls. The marks under the pieces are keyframes:\n"
-                          "where a copy without re-encoding can start.");
+                          "Ctrl+wheel zooms; zoomed in, the wheel moves along the video (so does the bar\n"
+                          "that appears below). The marks under the pieces are keyframes: where a copy\n"
+                          "without re-encoding can start.");
     connect(timeline_, &Timeline::playheadDragged, this, [this](double t) {
         pause();
         seek(t);
@@ -160,6 +174,11 @@ Editor::Editor(const QString &ffmpeg, const QString &ffprobe, QWidget *parent)
     connect(timeline_, &Timeline::selectionChanged, this, &Editor::updateActions);
     connect(timeline_, &Timeline::moveRequested, this, &Editor::moveSelection);
     connect(timeline_, &Timeline::menuRequested, this, &Editor::showMenu);
+    connect(timeline_, &Timeline::thumbnailsWanted, this, &Editor::wantThumbnails);
+    // under it, only when it is zoomed in: where the part on screen is in the whole video
+    overview_ = new TimelineOverview(timeline_);
+    overview_->hide();
+    connect(timeline_, &Timeline::viewChanged, this, [this] { overview_->setVisible(timeline_->zoom() > 1.001); });
 
     // --- Editing ---
     // tool buttons: as wide as their text (push buttons are at least 80 pixels wide on Windows)
@@ -186,17 +205,24 @@ Editor::Editor(const QString &ffmpeg, const QString &ffprobe, QWidget *parent)
         b->setIcon(arrowIcon(b == redoBtn_, palette().color(QPalette::ButtonText)));
         b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     }
+    // the buttons in groups: what works at the playhead, and what works on the selection
+    const auto group = [](const QString &title, std::initializer_list<QToolButton *> buttons) {
+        auto *box = new QGroupBox(title);
+        auto *row = new QHBoxLayout(box);
+        row->setContentsMargins(6, 2, 6, 4);
+        row->setSpacing(4);
+        for (QToolButton *b : buttons)
+            row->addWidget(b);
+        return box;
+    };
+    auto *playheadBox = group("At the playhead", {splitBtn_, pasteBtn_});
+    selectionBox_ = group("Selection", {startBtn_, endBtn_, cutBtn_, copyBtn_, deleteBtn_});
     auto *tools = new QHBoxLayout;
-    tools->setSpacing(4);
-    for (QToolButton *b : {startBtn_, endBtn_, splitBtn_})
-        tools->addWidget(b);
-    tools->addSpacing(10);
-    for (QToolButton *b : {cutBtn_, copyBtn_, pasteBtn_, deleteBtn_})
-        tools->addWidget(b);
-    tools->addSpacing(10);
-    tools->addWidget(undoBtn_);
-    tools->addWidget(redoBtn_);
+    tools->addWidget(playheadBox);
+    tools->addWidget(selectionBox_);
     tools->addStretch();
+    tools->addWidget(undoBtn_, 0, Qt::AlignBottom);
+    tools->addWidget(redoBtn_, 0, Qt::AlignBottom);
 
     status_ = new QLabel;
     status_->setWordWrap(true);
@@ -221,6 +247,7 @@ Editor::Editor(const QString &ffmpeg, const QString &ffprobe, QWidget *parent)
     layout->addWidget(view_, 1);
     layout->addLayout(transport);
     layout->addWidget(timeline_);
+    layout->addWidget(overview_);
     layout->addLayout(tools);
     layout->addLayout(bottom);
 
@@ -264,7 +291,7 @@ Editor::~Editor()
     for (QObject *child : findChildren<QObject *>())
         child->disconnect(this);
     player_->stop();
-    for (QProcess *proc : {keyframeProc_, thumbProc_})
+    for (QProcess *proc : QList<QProcess *>{keyframeProc_} + thumbProcs_)
         if (proc) {
             proc->kill();
             proc->waitForFinished(3000);
@@ -280,14 +307,19 @@ void Editor::setMedia(const std::optional<MediaInfo> &media)
 {
     ++gen_;
     pause();
-    for (QProcess **proc : {&keyframeProc_, &thumbProc_})
-        if (*proc) {
-            (*proc)->disconnect(this);
-            (*proc)->kill();
-            (*proc)->waitForFinished(1000);
-            (*proc)->deleteLater();
-            *proc = nullptr;
+    for (QProcess *proc : QList<QProcess *>{keyframeProc_} + thumbProcs_)
+        if (proc) {
+            proc->disconnect(this);
+            proc->kill();
+            proc->waitForFinished(1000);
+            proc->deleteLater();
         }
+    keyframeProc_ = nullptr;
+    seekTimer_->stop();
+    nextSeek_ = -1;
+    thumbProcs_.clear();
+    wantedThumbs_.clear();
+    requestedThumbs_.clear();
     media_ = media;
     edits_ = EditList(media ? media->duration : 0);
     undo_.clear();
@@ -348,6 +380,9 @@ void Editor::togglePlay()
     }
     const double frame = 1 / std::max(1.0, media_->fps);
     seek(playhead_ >= edits_.duration() - frame / 2 ? 0 : playhead_);
+    if (nextSeek_ >= 0)   // from where the playhead is, not from the frame still being looked for
+        player_->setPosition(std::exchange(nextSeek_, -1));
+    seekTimer_->stop();
     player_->play();
     playTimer_->start();
 }
@@ -373,7 +408,23 @@ void Editor::seek(double t)
     if (player_->playbackState() == QMediaPlayer::StoppedState)
         player_->pause();   // a paused player shows the frame it is on
     jumpTarget_ = source;
-    player_->setPosition(milliseconds(source));
+    if (player_->playbackState() == QMediaPlayer::PlayingState) {
+        player_->setPosition(milliseconds(source));
+    } else if (seekTimer_->isActive()) {
+        nextSeek_ = milliseconds(source);   // after the frame being looked for
+    } else {
+        player_->setPosition(milliseconds(source));
+        seekTimer_->start();
+    }
+}
+
+void Editor::seekDone()
+{
+    seekTimer_->stop();
+    if (nextSeek_ < 0)
+        return;
+    player_->setPosition(std::exchange(nextSeek_, -1));
+    seekTimer_->start();
 }
 
 void Editor::stepFrames(int frames)
@@ -643,20 +694,17 @@ void Editor::updateActions()
     saveCopyBtn_->setText(loaded && !keyframesReady_ ? "Save without re-encoding (reading keyframes…)"
                                                      : "Save without re-encoding…");
 
+    selectionBox_->setTitle(selected ? "Selection: " + fmtPrecise(timeline_->selectionEnd() - timeline_->selectionStart())
+                                     : QString("Selection"));
     if (!loaded) {
         status_->setText("Load a video to edit it.");
         return;
     }
-    QString text = edited() ? QString("%1 piece%2 · %3 of %4")
-                                  .arg(edits_.pieces().size())
-                                  .arg(edits_.pieces().size() == 1 ? "" : "s")
-                                  .arg(fmtPrecise(edits_.duration()), fmtPrecise(media_->duration))
-                            : QString("The whole video · %1").arg(fmtPrecise(media_->duration));
-    if (selected)
-        text += QString(" · selection %1").arg(fmtPrecise(timeline_->selectionEnd() - timeline_->selectionStart()));
-    if (!clipboard_.empty())
-        text += QString(" · %1 to paste").arg(fmtPrecise(totalLength(clipboard_)));
-    status_->setText(text);
+    // only what the rest doesn't show: the lengths are next to the play buttons, in the Selection title and at
+    // the top, the pieces on the timeline
+    status_->setText(clipboard_.empty() ? QString()
+                                        : QString("%1 cut or copied: Paste puts it at the playhead.")
+                                              .arg(fmtPrecise(totalLength(clipboard_))));
 }
 
 // ------------------------------------------------ keyframes and thumbnails
@@ -722,20 +770,47 @@ double Editor::copyStop(double end) const
     return stop;
 }
 
+// The frames the zoomed-in timeline shows: they replace the ones it wanted before (it moved on since).
+void Editor::wantThumbnails(const QList<double> &sourceTimes)
+{
+    // not zoomed in, the ones at the keyframes come first: they fill the whole strip sooner
+    if (!media_ || !keyframesReady_ || !isVisible() || (timeline_->zoom() <= 1.001 && !thumbQueue_.empty()))
+        return;
+    wantedThumbs_.clear();
+    for (double t : sourceTimes)
+        if (!requestedThumbs_.contains(qint64(std::llround(t * 1000))))
+            wantedThumbs_.push_back(t);
+    nextThumbnail();
+}
+
 void Editor::nextThumbnail()
 {
     thumbsStarted_ = true;
-    if (thumbQueue_.empty() || !media_ || thumbProc_)
-        return;
-    const double t = thumbQueue_.back();
-    thumbQueue_.pop_back();
+    while (media_ && thumbProcs_.size() < THUMBNAIL_PROCESSES) {
+        if (!wantedThumbs_.empty()) {   // what is on screen first
+            const double t = wantedThumbs_.front();
+            wantedThumbs_.erase(wantedThumbs_.begin());
+            startThumbnail(t, true);
+        } else if (!thumbQueue_.empty()) {
+            const double t = thumbQueue_.back();
+            thumbQueue_.pop_back();
+            startThumbnail(t, false);
+        } else {
+            return;
+        }
+    }
+}
+
+// exact: that very frame (decoded from the keyframe before it); otherwise t is a keyframe, and only it is decoded
+void Editor::startThumbnail(double t, bool exact)
+{
+    requestedThumbs_.insert(qint64(std::llround(t * 1000)));
     auto *proc = new QProcess(this);
-    thumbProc_ = proc;
+    thumbProcs_ << proc;
     const int gen = gen_;
     connect(proc, &QProcess::finished, this, [this, proc, gen, t] {
         proc->deleteLater();
-        if (proc == thumbProc_)
-            thumbProc_ = nullptr;
+        thumbProcs_.removeOne(proc);
         if (gen != gen_)
             return;
         QImage image;
@@ -743,9 +818,13 @@ void Editor::nextThumbnail()
             timeline_->addThumbnail(t, image);
         nextThumbnail();
     });
-    // just after the keyframe: the seek lands on it and only that frame is decoded
-    proc->start(ffmpeg_, {"-v", "error", "-ss", QString::number(t + 0.001, 'f', 3), "-noaccurate_seek", "-i",
-                          media_->path, "-map", QString("0:%1").arg(media_->videoIndex), "-frames:v", "1", "-vf",
-                          QString("scale=-2:%1").arg(THUMBNAIL_HEIGHT), "-f", "image2pipe", "-c:v", "mjpeg",
-                          "-q:v", "4", "-"});
+    QStringList args{"-v", "error"};
+    if (exact)   // half a frame before: rounded to milliseconds, t itself may fall after the frame and give the next one
+        args << "-ss" << QString::number(std::max(0.0, t - 0.5 / std::max(1.0, media_->fps)), 'f', 3);
+    else   // just after the keyframe: the seek lands on it
+        args << "-ss" << QString::number(t + 0.001, 'f', 3) << "-noaccurate_seek";
+    args << "-i" << media_->path << "-map" << QString("0:%1").arg(media_->videoIndex) << "-frames:v" << "1"
+         << "-vf" << QString("scale=-2:%1").arg(THUMBNAIL_HEIGHT) << "-f" << "image2pipe" << "-c:v" << "mjpeg"
+         << "-q:v" << "4" << "-";
+    proc->start(ffmpeg_, args);
 }

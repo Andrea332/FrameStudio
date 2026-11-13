@@ -30,7 +30,7 @@ class UpdateChecker : public QObject
 
 public:
     static constexpr const char *LATEST_RELEASE_API =
-        "https://api.github.com/repos/Andrea332/VideoCompressor/releases/latest";
+        "https://api.github.com/repos/Andrea332/FrameStudio/releases/latest";
     // the installer of this build's Windows version among the files of a release (x64 or ARM64)
     static constexpr const char *INSTALLER_SUFFIX = "-" INSTALLER_PLATFORM ".exe";
 

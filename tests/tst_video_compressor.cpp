@@ -78,6 +78,8 @@ private slots:
     void keepsPortableSettingsNextToTheApp();
     void editsAListOfPieces();
     void editsWithKeysAndMouse();
+    void zoomsWithAccurateThumbnails();
+    void showsFramesWhileDragging();
     void playsTheEditedVideo();
     void compressesTheEditedVideo();
     void estimatesTheEditedVideo();
@@ -802,6 +804,7 @@ void TestVideoCompressor::analyzesAndSetsTheBest()
     };
 
     select(w.goalCombo_, true);   // smallest with no visible loss
+    QVERIFY(w.limitRow_->isHidden());   // the limit doesn't count: not shown
     QVERIFY(analyze());
     QVERIFY2(w.autoResult_->text().contains("Smallest with no visible loss") && w.autoResult_->text().contains("Analysis:"),
              qPrintable(w.autoResult_->text()));
@@ -811,6 +814,7 @@ void TestVideoCompressor::analyzesAndSetsTheBest()
     qInfo().noquote() << plainText(w.autoResult_->text());
 
     select(w.goalCombo_, false);   // best within 2 MB: too little for 720p at good quality
+    QVERIFY(!w.limitRow_->isHidden());
     w.limitSpin_->setValue(2.0);
     QVERIFY(analyze());
     const QString text = w.autoResult_->text();
@@ -826,6 +830,7 @@ void TestVideoCompressor::analyzesAndSetsTheBest()
     QVERIFY(analyze());
     QVERIFY2(w.codec_->family == "av1" || w.codec_->family == "hevc", qPrintable(w.codec_->family));
     w.allowCodecCheck_->setChecked(false);
+    select(w.goalCombo_, false);
     w.limitSpin_->setValue(10);
     select(w.formatCombo_, "mp4");
     select(w.vcodecCombo_, "h264");
@@ -846,6 +851,10 @@ void TestVideoCompressor::showsTheOutcomeClearly()
     QVERIFY(!compress(path("input.mp4"), "mp4", "h264", "off", {}, "aac").isEmpty());
     QCOMPARE(w.outcomeTitle_->text(), QString("Export complete, but over the limit"));
     QVERIFY2(w.outcomeText_->text().contains("over the 0.5 MB limit"), qPrintable(w.outcomeText_->text()));
+    select(w.goalCombo_, true);   // the smallest file: the limit isn't shown, so nothing is said about it
+    QVERIFY(!compress(path("input.mp4"), "mp4", "h264", "off", {}, "aac").isEmpty());
+    QCOMPARE(w.outcomeTitle_->text(), QString("Export complete"));
+    select(w.goalCombo_, false);
     w.limitSpin_->setValue(10);
 
     w.setInput(path("input.mp4"));
@@ -894,7 +903,7 @@ void TestVideoCompressor::notifiesAboutUpdates()
 
     const QByteArray json = R"({
         "tag_name": "v9.9.10",
-        "html_url": "https://github.com/Andrea332/VideoCompressor/releases/tag/v9.9.10",
+        "html_url": "https://github.com/Andrea332/FrameStudio/releases/tag/v9.9.10",
         "assets": [
             {"name": "FrameStudio-9.9.10-win64.zip", "browser_download_url": "https://example.com/a.zip"},
             {"name": "FrameStudio-9.9.10-win64.exe", "browser_download_url": "https://example.com/win64.exe",
@@ -1111,6 +1120,144 @@ void TestVideoCompressor::editsWithKeysAndMouse()
     w.tabs_->setCurrentIndex(0);
 }
 
+// Zoomed in, the bar under the timeline shows and moves the part on screen, the wheel moves along the video,
+// and the thumbnails are the frames on screen, not the keyframe before them.
+void TestVideoCompressor::zoomsWithAccurateThumbnails()
+{
+    // 2 s red, then 2 s blue, with a single keyframe: a thumbnail read at a keyframe is red everywhere
+    const QString file = path("onekey.mp4");
+    run(ffmpeg_, {"-y", "-v", "error", "-f", "lavfi", "-i", "color=red:s=320x240:r=30:d=2", "-f", "lavfi", "-i",
+                  "color=blue:s=320x240:r=30:d=2", "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0", "-c:v",
+                  "libx264", "-g", "300", "-keyint_min", "300", "-sc_threshold", "0", file});
+    MainWindow &w = *win_;
+    Editor &e = *w.editor_;
+    Timeline &t = *e.timeline_;
+    w.setInput(file);
+    w.tabs_->setCurrentWidget(&e);
+    QVERIFY(QTest::qWaitFor([&] { return e.keyframesReady(); }, 20000));
+    QCOMPARE(e.keyframes_.size(), size_t(1));
+    QVERIFY(e.overview_->isHidden());   // not zoomed in
+
+    const auto colorAt = [&](double time) {   // of the thumbnail the strip shows there
+        if (t.thumbnails_.isEmpty())
+            return '?';
+        const QImage &image = t.nearestThumbnail(time).value();
+        const QColor c = image.pixelColor(image.width() / 2, image.height() / 2);
+        return c.red() > 150 && c.blue() < 100 ? 'r' : c.blue() > 150 && c.red() < 100 ? 'b' : '?';
+    };
+    // even the whole video: the blue half gets its own frames
+    QVERIFY2(QTest::qWaitFor([&] { return colorAt(3.5) == 'b'; }, 30000), qPrintable(QString(QChar(colorAt(3.5)))));
+
+    // zoomed in around the change from red to blue
+    e.seek(2);
+    t.zoomBy(16);
+    QVERIFY(QTest::qWaitFor([&] { return e.overview_->isVisible(); }, 2000));
+    QVERIFY(t.visibleDuration() < 0.3);
+    // once all are read, each thumbnail is its own frame (not the next one): red before 2 s, blue from there
+    QVERIFY(QTest::qWaitFor([&] {
+        return e.wantedThumbs_.empty() && e.thumbProcs_.isEmpty() && !t.thumbTimer_->isActive()
+               && t.thumbnails_.lowerBound(1.9) != t.thumbnails_.lowerBound(2.1);
+    }, 30000));
+    QString wrong;
+    for (auto it = t.thumbnails_.cbegin(); it != t.thumbnails_.cend(); ++it) {
+        const QColor c = it.value().pixelColor(it.value().width() / 2, it.value().height() / 2);
+        const bool blue = c.blue() > 150 && c.red() < 100;
+        if (blue != (it.key() > 2.0 - 1e-3))
+            wrong += QString(" %1").arg(it.key(), 0, 'f', 4);
+    }
+    QVERIFY2(wrong.isEmpty(), qPrintable("thumbnails of another frame at" + wrong));
+    QCOMPARE(colorAt(1.96), 'r');   // the last red frame (1.967 s)...
+    QCOMPARE(colorAt(2.01), 'b');   // ...and the first blue one
+
+    // the wheel moves along the video, Ctrl+wheel zooms
+    const auto wheel = [&](int steps, Qt::KeyboardModifiers modifiers) {
+        const QPointF at(t.width() / 2.0, 40);
+        QWheelEvent event(at, t.mapToGlobal(at), {}, QPoint(0, steps * 120), Qt::NoButton, modifiers,
+                          Qt::NoScrollPhase, false);
+        QApplication::sendEvent(&t, &event);
+    };
+    const double before = t.scroll();
+    wheel(-3, Qt::NoModifier);
+    QVERIFY2(t.scroll() > before, qPrintable(QString("%1 → %2").arg(before).arg(t.scroll())));
+    const double zoom = t.zoom();
+    wheel(1, Qt::ControlModifier);
+    QVERIFY(t.zoom() > zoom);
+
+    // the bar: a click at its start brings the part on screen there, dragging it moves it to the end
+    TimelineOverview &o = *e.overview_;
+    QTest::mouseClick(&o, Qt::LeftButton, Qt::NoModifier, QPoint(2, o.height() / 2));
+    QCOMPARE(t.scroll(), 0.0);
+    const int boxCentre = int(o.xAt(t.visibleDuration() / 2));
+    QTest::mousePress(&o, Qt::LeftButton, Qt::NoModifier, QPoint(boxCentre, o.height() / 2));
+    QMouseEvent move(QEvent::MouseMove, QPointF(o.width() - 1, o.height() / 2),
+                     o.mapToGlobal(QPointF(o.width() - 1, o.height() / 2)), Qt::NoButton, Qt::LeftButton,
+                     Qt::NoModifier);
+    QApplication::sendEvent(&o, &move);
+    QTest::mouseRelease(&o, Qt::LeftButton, Qt::NoModifier, QPoint(o.width() - 1, o.height() / 2));
+    QVERIFY2(std::abs(t.scroll() + t.visibleDuration() - t.duration()) < 1e-6, qPrintable(QString::number(t.scroll())));
+
+    t.zoomToFit();
+    QVERIFY(e.overview_->isHidden());
+    w.tabs_->setCurrentIndex(0);
+}
+
+// As in the app: the video is loaded from the Export tab and, before anything is played, the playhead is dragged.
+// The picture follows it (each new position used to interrupt the frame being looked for, so hardly any
+// appeared) and ends on the frame where the drag stops.
+void TestVideoCompressor::showsFramesWhileDragging()
+{
+    MainWindow &w = *win_;
+    Editor &e = *w.editor_;
+    Timeline &t = *e.timeline_;
+    w.tabs_->setCurrentIndex(0);
+    w.setInput(path("colors.mp4"));
+    QTest::qWait(1000);
+    w.tabs_->setCurrentWidget(&e);
+    if (!QTest::qWaitFor([&] { return !e.view_->frame().isNull(); }, 15000))
+        QSKIP(qPrintable("no video from Qt Multimedia here: " + e.player_->errorString()));
+    const auto color = [&] {
+        const QImage &f = e.view_->frame();
+        const QColor c = f.pixelColor(f.width() / 2, f.height() / 2);
+        return c.red() > 150 && c.green() < 100 ? 'r' : c.green() > 100 && c.red() < 100 && c.blue() < 100 ? 'g'
+               : c.blue() > 150 && c.green() < 100 ? 'b' : '?';
+    };
+    // while the player looks for a frame, new positions wait: only the latest is kept
+    e.seek(1);
+    QVERIFY(e.seekTimer_->isActive());
+    e.seek(2);
+    e.seek(3);
+    QCOMPARE(e.nextSeek_, qint64(3000));
+    QVERIFY(QTest::qWaitFor([&] { return color() == 'g' && !e.seekTimer_->isActive(); }, 5000));
+    QCOMPARE(e.player_->position(), qint64(3000));
+    e.seek(0.5);
+    QVERIFY(QTest::qWaitFor([&] { return color() == 'r' && !e.seekTimer_->isActive(); }, 5000));
+
+    QString seen = QChar(color());
+    int frames = 0;
+    const QMetaObject::Connection watch = QObject::connect(e.view_, &VideoView::frameShown, [&] {
+        ++frames;
+        if (const char c = color(); c != '?' && !seen.endsWith(QChar(c)))
+            seen += QChar(c);
+    });
+    // from 0.5 s (red) to 5.5 s (blue) in about a second, a move every 16 ms as with a mouse
+    const auto x = [&](double time) { return int(8 + time * (t.width() - 16) / e.edits().duration()); };
+    QTest::mousePress(&t, Qt::LeftButton, Qt::NoModifier, QPoint(x(0.5), 10));
+    for (int step = 1; step <= 60; ++step) {
+        const QPointF at(x(0.5 + 5.0 * step / 60), 10);
+        QMouseEvent move(QEvent::MouseMove, at, t.mapToGlobal(at), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&t, &move);
+        QTest::qWait(16);
+    }
+    QTest::mouseRelease(&t, Qt::LeftButton, Qt::NoModifier, QPoint(x(5.5), 10));
+    QVERIFY(QTest::qWaitFor([&] { return color() == 'b' && !e.seekTimer_->isActive(); }, 5000));
+    QObject::disconnect(watch);
+    QVERIFY2(std::abs(e.player_->position() - 5500) < 100, qPrintable(QString::number(e.player_->position())));
+    QVERIFY2(frames >= 3, qPrintable(QString("%1 frames while dragging").arg(frames)));   // (slow CI machines too)
+    QCOMPARE(seen, QString("rgb"));   // the green part in the middle too
+    QCOMPARE(e.player_->playbackState(), QMediaPlayer::PausedState);
+    w.tabs_->setCurrentIndex(0);
+}
+
 // The player shows the frame at the playhead and, when playing, jumps over what was cut.
 void TestVideoCompressor::playsTheEditedVideo()
 {
@@ -1323,7 +1470,7 @@ void TestVideoCompressor::rendersWindow()
     e.timeline_->setSelection(d * 0.75, d * 0.9);   // the moved part
     e.updateActions();
     e.seek(d * 0.8);
-    QVERIFY(QTest::qWaitFor([&] { return e.keyframesReady() && e.thumbQueue_.empty() && !e.thumbProc_; }, 120000));
+    QVERIFY(QTest::qWaitFor([&] { return e.keyframesReady() && e.thumbQueue_.empty() && e.wantedThumbs_.empty() && e.thumbProcs_.isEmpty(); }, 120000));
     if (!QTest::qWaitFor([&] { return !e.view_->frame().isNull(); }, 15000))
         qInfo() << "No video frame from Qt Multimedia for the picture";
     const QPixmap editorShot = grabAll();

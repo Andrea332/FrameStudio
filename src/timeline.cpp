@@ -3,6 +3,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QTimer>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -18,6 +19,7 @@ constexpr int HEIGHT = RULER + TRACK + KEYFRAMES + 6;
 constexpr int SNAP_PIXELS = 6;
 constexpr int EDGE_PIXELS = 5;     // how close to an edge of the selection grabs it
 constexpr double MAX_ZOOM = 2000;
+constexpr int OVERVIEW = 18;
 
 QString rulerLabel(double t, double step)
 {
@@ -30,11 +32,22 @@ QString rulerLabel(double t, double step)
 } // namespace
 
 Timeline::Timeline(QWidget *parent)
-    : QWidget(parent)
+    : QWidget(parent), thumbTimer_(new QTimer(this))
 {
     setFocusPolicy(Qt::StrongFocus);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setMouseTracking(true);
+    thumbTimer_->setSingleShot(true);
+    thumbTimer_->setInterval(150);
+    connect(thumbTimer_, &QTimer::timeout, this, &Timeline::findMissingThumbnails);
+}
+
+void Timeline::changed(bool view)
+{
+    update();
+    emit viewChanged();
+    if (view)
+        thumbTimer_->start();
 }
 
 QSize Timeline::sizeHint() const
@@ -54,7 +67,7 @@ void Timeline::setPieces(const std::vector<Piece> &pieces)
     selFrom_ = std::min(selFrom_, duration());
     selTo_ = std::min(selTo_, duration());
     clampScroll();
-    update();
+    changed(true);
 }
 
 void Timeline::setFrameDuration(double seconds)
@@ -72,6 +85,7 @@ void Timeline::addThumbnail(double sourceTime, const QImage &image)
 {
     thumbnails_.insert(sourceTime, image);
     update();
+    thumbTimer_->start();   // what is still missing (the first one also tells the size of a thumbnail)
 }
 
 void Timeline::clearThumbnails()
@@ -118,21 +132,33 @@ double Timeline::snapped(double t, bool toPlayhead) const
     return std::clamp(std::round(t / frame_) * frame_, 0.0, duration());
 }
 
+double Timeline::visibleDuration() const
+{
+    return duration() / zoom_;
+}
+
 void Timeline::clampScroll()
 {
-    const double visible = duration() / zoom_;
-    scroll_ = std::clamp(scroll_, 0.0, std::max(0.0, duration() - visible));
+    scroll_ = std::clamp(scroll_, 0.0, std::max(0.0, duration() - visibleDuration()));
+}
+
+void Timeline::setScroll(double t)
+{
+    scroll_ = t;
+    clampScroll();
+    changed(true);
 }
 
 void Timeline::setPlayhead(double t)
 {
     playhead_ = std::clamp(t, 0.0, duration());
     const double x = xAt(playhead_);
-    if (x < MARGIN || x > width() - MARGIN) {   // keep it in view, a little after the left edge
-        scroll_ = playhead_ - duration() / zoom_ * 0.1;
+    const bool scrolls = x < MARGIN || x > width() - MARGIN;
+    if (scrolls) {   // keep it in view, a little after the left edge
+        scroll_ = playhead_ - visibleDuration() * 0.1;
         clampScroll();
     }
-    update();
+    changed(scrolls);
 }
 
 bool Timeline::hasSelection() const
@@ -144,7 +170,7 @@ void Timeline::setSelection(double from, double to)
 {
     selFrom_ = std::clamp(std::min(from, to), 0.0, duration());
     selTo_ = std::clamp(std::max(from, to), 0.0, duration());
-    update();
+    changed(false);
 }
 
 void Timeline::zoomBy(double factor)
@@ -153,19 +179,67 @@ void Timeline::zoomBy(double factor)
     zoom_ = std::clamp(zoom_ * factor, 1.0, MAX_ZOOM);
     scroll_ = playhead_ - (x - MARGIN) / pixelsPerSecond();   // the playhead stays where it is
     clampScroll();
-    update();
+    changed(true);
 }
 
 void Timeline::zoomToFit()
 {
     zoom_ = 1;
     scroll_ = 0;
-    update();
+    changed(true);
 }
 
 void Timeline::resizeEvent(QResizeEvent *)
 {
     clampScroll();
+    changed(true);
+}
+
+// ------------------------------------------------ thumbnails
+double Timeline::tileWidth() const
+{
+    if (thumbnails_.isEmpty())
+        return 0;
+    const QImage &any = thumbnails_.first();
+    return std::max(16.0, TRACK * double(any.width()) / std::max(1, any.height()));
+}
+
+QMap<double, QImage>::const_iterator Timeline::nearestThumbnail(double sourceTime) const
+{
+    auto it = thumbnails_.lowerBound(sourceTime);
+    if (it == thumbnails_.cend() || (it != thumbnails_.cbegin() && sourceTime - std::prev(it).key() < it.key() - sourceTime))
+        it = std::prev(it);
+    return it;
+}
+
+// Each thumbnail on the strip stands for the frames under it. The first ones are read at the keyframes,
+// spread over the video: zoomed in, a thumbnail can be far from what it stands for (seconds earlier). Ask for
+// the frames that are on screen instead.
+void Timeline::findMissingThumbnails()
+{
+    const double tile = tileWidth();
+    if (tile <= 0)
+        return;
+    const double pps = pixelsPerSecond();
+    QList<double> wanted;
+    double position = 0;
+    for (const Piece &piece : pieces_) {
+        const double left = xAt(position), right = xAt(position + piece.length());
+        position += piece.length();
+        if (right < 0 || left > width())
+            continue;
+        for (double x = std::max(left, std::floor(-left / tile) * tile + left); x < std::min(right, double(width()));
+             x += tile) {
+            const double t = std::clamp(piece.start + (x + tile / 2 - left) / pps, piece.start,
+                                        std::max(piece.start, piece.end - frame_));
+            const double frameTime = std::round(t / frame_) * frame_;
+            const double near = nearestThumbnail(frameTime).key();
+            if (std::abs(near - frameTime) > std::max(tile / pps / 2, frame_ * 0.75))
+                wanted << frameTime;
+        }
+    }
+    if (!wanted.isEmpty())
+        emit thumbnailsWanted(wanted);
 }
 
 // ------------------------------------------------ painting
@@ -257,16 +331,11 @@ void Timeline::paintPieces(QPainter &p)
         clip.addRoundedRect(shown, 4, 4);
         p.setClipPath(clip);
         p.fillRect(shown, palette().color(QPalette::Mid));
-        if (!thumbnails_.isEmpty()) {
-            const QImage &any = thumbnails_.first();
-            const double tile = std::max(16.0, TRACK * double(any.width()) / std::max(1, any.height()));
-            for (double x = std::max(shown.left(), std::floor((0 - shown.left()) / tile) * tile + shown.left());
-                 x < std::min(shown.right(), double(width())); x += tile) {
+        if (const double tile = tileWidth(); tile > 0) {   // tiled as findMissingThumbnails() expects them
+            for (double x = std::max(r.left(), std::floor(-r.left() / tile) * tile + r.left());
+                 x < std::min(r.right(), double(width())); x += tile) {
                 const double sourceTime = piece.start + (x + tile / 2 - r.left()) / pps;
-                auto it = thumbnails_.lowerBound(sourceTime);   // the nearest thumbnail
-                if (it == thumbnails_.end() || (it != thumbnails_.begin() && sourceTime - std::prev(it).key() < it.key() - sourceTime))
-                    it = std::prev(it);
-                p.drawImage(QRectF(x, shown.top(), tile, shown.height()), it.value());
+                p.drawImage(QRectF(x, shown.top(), tile, shown.height()), nearestThumbnail(sourceTime).value());
             }
         }
         p.restore();
@@ -369,7 +438,7 @@ void Timeline::mouseMoveEvent(QMouseEvent *event)
         if (std::abs(x - pressX_) > 4) {
             setCursor(Qt::ClosedHandCursor);
             dropAt_ = t;
-            update();
+            changed(false);
         }
         break;
     case Drag::None:
@@ -399,7 +468,7 @@ void Timeline::mouseReleaseEvent(QMouseEvent *event)
         emit moveRequested(selFrom_, selTo_, dropAt_);
     }
     dropAt_ = -1;
-    update();
+    changed(false);
 }
 
 void Timeline::mouseDoubleClickEvent(QMouseEvent *event)
@@ -428,9 +497,108 @@ void Timeline::wheelEvent(QWheelEvent *event)
         scroll_ = t - (x - MARGIN) / pixelsPerSecond();   // the time under the mouse stays there
     } else {
         const double steps2 = steps != 0 ? steps : event->angleDelta().x() / 120.0;
-        scroll_ -= steps2 * duration() / zoom_ * 0.1;
+        scroll_ -= steps2 * visibleDuration() * 0.1;   // down: later in the video
     }
     clampScroll();
-    update();
+    changed(true);
     event->accept();
+}
+
+// ------------------------------------------------ overview
+TimelineOverview::TimelineOverview(Timeline *timeline, QWidget *parent)
+    : QWidget(parent), timeline_(timeline)
+{
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setToolTip("The whole video: the box is the part shown above. Drag it to move along the video.");
+    connect(timeline, &Timeline::viewChanged, this, qOverload<>(&QWidget::update));
+}
+
+QSize TimelineOverview::sizeHint() const
+{
+    return {600, OVERVIEW};
+}
+
+QSize TimelineOverview::minimumSizeHint() const
+{
+    return {200, OVERVIEW};
+}
+
+double TimelineOverview::xAt(double t) const
+{
+    const double d = timeline_->duration();
+    return MARGIN + (d > 0 ? t / d : 0) * (width() - 2 * MARGIN);
+}
+
+double TimelineOverview::timeAt(double x) const
+{
+    return std::clamp((x - MARGIN) / std::max(1, width() - 2 * MARGIN) * timeline_->duration(), 0.0,
+                      timeline_->duration());
+}
+
+bool TimelineOverview::inBox(double x) const
+{
+    return x >= xAt(timeline_->scroll()) && x <= xAt(timeline_->scroll() + timeline_->visibleDuration());
+}
+
+void TimelineOverview::paintEvent(QPaintEvent *)
+{
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.fillRect(rect(), palette().color(QPalette::Base));
+    const QRectF bar(MARGIN, 3, width() - 2 * MARGIN, height() - 6);
+    QColor piece = palette().color(QPalette::Text);
+    double position = 0;
+    int index = 0;
+    for (const Piece &pc : timeline_->pieces()) {   // the pieces, one shade each
+        piece.setAlphaF(index++ % 2 ? 0.18f : 0.28f);
+        p.fillRect(QRectF(QPointF(xAt(position), bar.top()), QPointF(xAt(position + pc.length()), bar.bottom())), piece);
+        position += pc.length();
+    }
+    const QColor highlight = palette().color(QPalette::Highlight);
+    if (timeline_->hasSelection()) {
+        QColor fill = highlight;
+        fill.setAlphaF(0.45f);
+        p.fillRect(QRectF(QPointF(xAt(timeline_->selectionStart()), bar.top()),
+                          QPointF(xAt(timeline_->selectionEnd()), bar.bottom())), fill);
+    }
+    p.setPen(QPen(QColor(229, 57, 53), 2));
+    p.drawLine(QPointF(xAt(timeline_->playhead()), 0), QPointF(xAt(timeline_->playhead()), height()));
+    // the part on screen
+    const QRectF box(QPointF(xAt(timeline_->scroll()), 1),
+                     QPointF(xAt(timeline_->scroll() + timeline_->visibleDuration()), height() - 1));
+    QColor fill = highlight;
+    fill.setAlphaF(0.18f);
+    p.setBrush(fill);
+    p.setPen(QPen(highlight, 2));
+    p.drawRoundedRect(box.adjusted(1, 0, -1, 0).normalized(), 3, 3);
+}
+
+void TimelineOverview::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() != Qt::LeftButton)
+        return;
+    const double x = event->position().x();
+    if (inBox(x)) {
+        grab_ = timeAt(x) - timeline_->scroll();
+    } else {   // brings the box here, centred
+        grab_ = timeline_->visibleDuration() / 2;
+        timeline_->setScroll(timeAt(x) - grab_);
+    }
+    setCursor(Qt::ClosedHandCursor);
+}
+
+void TimelineOverview::mouseMoveEvent(QMouseEvent *event)
+{
+    const double x = event->position().x();
+    if (grab_ < 0) {
+        setCursor(inBox(x) ? Qt::OpenHandCursor : Qt::PointingHandCursor);
+        return;
+    }
+    timeline_->setScroll(timeAt(x) - grab_);
+}
+
+void TimelineOverview::mouseReleaseEvent(QMouseEvent *)
+{
+    grab_ = -1;
+    setCursor(Qt::OpenHandCursor);
 }

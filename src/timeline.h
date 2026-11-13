@@ -3,8 +3,11 @@
 #include "editlist.h"
 
 #include <QImage>
+#include <QList>
 #include <QMap>
 #include <QWidget>
+
+class QTimer;
 
 #include <vector>
 
@@ -15,6 +18,7 @@
 class Timeline : public QWidget
 {
     Q_OBJECT
+    friend class TestVideoCompressor;
 
 public:
     explicit Timeline(QWidget *parent = nullptr);
@@ -36,6 +40,13 @@ public:
     void zoomToFit();
     double zoom() const { return zoom_; }
 
+    // what is on screen, for the overview bar under the zoomed-in timeline
+    const std::vector<Piece> &pieces() const { return pieces_; }
+    double duration() const;                               // of the edited video
+    double scroll() const { return scroll_; }              // time at the left edge
+    double visibleDuration() const;
+    void setScroll(double t);
+
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
@@ -44,6 +55,9 @@ signals:
     void selectionChanged();
     void moveRequested(double from, double to, double at);
     void menuRequested(double t, const QPoint &globalPos);  // right click without dragging
+    void viewChanged();                                    // zoom, scroll, pieces, playhead or selection
+    // the frames that the strip shows, zoomed in, but has no thumbnail for (source times)
+    void thumbnailsWanted(const QList<double> &sourceTimes);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -57,7 +71,10 @@ protected:
 private:
     enum class Drag { None, Scrub, Select, StartEdge, EndEdge, Move };
 
-    double duration() const;
+    void changed(bool view);   // repaints; view: zoom, scroll or pieces changed, which may need thumbnails
+    void findMissingThumbnails();
+    double tileWidth() const;  // of a thumbnail on the strip, 0 until there is one
+    QMap<double, QImage>::const_iterator nearestThumbnail(double sourceTime) const;
     double pixelsPerSecond() const;
     double timeAt(double x) const;
     double xAt(double t) const;
@@ -81,4 +98,33 @@ private:
     double pressX_ = 0;
     bool moved_ = false;                // the mouse went a few pixels since it was pressed
     double dropAt_ = -1;                // where the selection being moved would go
+    QTimer *thumbTimer_;                // looks for missing thumbnails once the view stops changing
+};
+
+// The whole edited video in a thin bar under the zoomed-in timeline: the part on screen is a box that can be
+// dragged, and a click elsewhere brings it there. It shows the pieces, the selection and the playhead.
+class TimelineOverview : public QWidget
+{
+    Q_OBJECT
+    friend class TestVideoCompressor;
+
+public:
+    explicit TimelineOverview(Timeline *timeline, QWidget *parent = nullptr);
+
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+
+private:
+    double timeAt(double x) const;
+    double xAt(double t) const;
+    bool inBox(double x) const;
+
+    Timeline *timeline_;
+    double grab_ = -1;   // where the box was grabbed, in seconds from its start
 };

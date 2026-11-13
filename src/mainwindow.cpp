@@ -381,12 +381,32 @@ MainWindow::MainWindow(QWidget *parent)
     settingsBox_->setLayout(settingsForm_);
     settingsBox_->setEnabled(false);
 
+    // --- The size limit, in Automatic settings when the goal is the best quality within it ---
+    limitSpin_ = new QDoubleSpinBox;
+    limitSpin_->setRange(0.5, 4000);
+    limitSpin_->setDecimals(1);
+    limitSpin_->setValue(10);
+    limitSpin_->setSuffix(" MB");
+    connect(limitSpin_, &QDoubleSpinBox::valueChanged, this, &MainWindow::updateLimitStatus);
+    limitStatus_ = new QLabel;
+    fitBtn_ = new QPushButton("Fit quality to limit");
+    fitBtn_->setEnabled(false);
+    fitBtn_->setToolTip("Keeps the settings below and changes only the quality (or the bitrate) to stay under the limit");
+    connect(fitBtn_, &QPushButton::clicked, this, [this] { fitToLimit(); });
+    limitRow_ = new QWidget;
+    auto *limitRow = new QHBoxLayout(limitRow_);
+    limitRow->setContentsMargins(0, 0, 0, 0);
+    limitRow->addWidget(new QLabel("Limit:"));
+    limitRow->addWidget(limitSpin_);
+    limitRow->addWidget(limitStatus_, 1);
+    limitRow->addWidget(fitBtn_);
+
     // --- Automatic settings: the analyzer (autosettings.cpp) ---
     goalCombo_ = new QComboBox;
     goalCombo_->addItem("Best quality within the limit", false);
     goalCombo_->addItem("Smallest file with no visible loss", true);
     goalCombo_->setItemData(0, "Analyzes the video and picks quality, resolution, frame rate and sound to stay under\n"
-                               "the limit (below) looking as good as possible: rather than letting the quality drop\n"
+                               "the limit looking as good as possible: rather than letting the quality drop\n"
                                "below good, it lowers the frame rate or the resolution.", Qt::ToolTipRole);
     goalCombo_->setItemData(1, "Analyzes the video and picks the settings of the smallest file that still looks like\n"
                                "the original, whatever the limit.", Qt::ToolTipRole);
@@ -405,7 +425,9 @@ MainWindow::MainWindow(QWidget *parent)
     autoBox_ = new QGroupBox("Automatic settings");
     auto *autoLayout = new QVBoxLayout(autoBox_);
     autoLayout->addLayout(goalRow);
+    autoLayout->addWidget(limitRow_);
     autoLayout->addWidget(allowCodecCheck_);
+    connect(goalCombo_, &QComboBox::currentIndexChanged, this, [this] { limitRow_->setVisible(limitGoal()); });
     autoLayout->addWidget(autoResult_);
     autoBox_->setEnabled(false);
 
@@ -434,27 +456,10 @@ MainWindow::MainWindow(QWidget *parent)
     sizeDetail_ = new QLabel("Load a video to see the estimate.");
     sizeDetail_->setWordWrap(true);
 
-    limitSpin_ = new QDoubleSpinBox;
-    limitSpin_->setRange(0.5, 4000);
-    limitSpin_->setDecimals(1);
-    limitSpin_->setValue(10);
-    limitSpin_->setSuffix(" MB");
-    connect(limitSpin_, &QDoubleSpinBox::valueChanged, this, &MainWindow::updateLimitStatus);
-    limitStatus_ = new QLabel;
-    fitBtn_ = new QPushButton("Fit quality to limit");
-    fitBtn_->setEnabled(false);
-    connect(fitBtn_, &QPushButton::clicked, this, [this] { fitToLimit(); });
-    auto *limitRow = new QHBoxLayout;
-    limitRow->addWidget(new QLabel("Limit:"));
-    limitRow->addWidget(limitSpin_);
-    limitRow->addWidget(limitStatus_, 1);
-    limitRow->addWidget(fitBtn_);
-
     auto *previewBox = new QGroupBox("Estimated output size");
     auto *previewLayout = new QVBoxLayout(previewBox);
     previewLayout->addLayout(sizeRow);
     previewLayout->addWidget(sizeDetail_);
-    previewLayout->addLayout(limitRow);
 
     // --- Output and start ---
     outEdit_ = new QLineEdit;
@@ -1236,6 +1241,12 @@ void MainWindow::onEstimateFailed(const QString &message)
     updateLimitStatus();
 }
 
+// The size limit counts only with this goal: otherwise it isn't shown.
+bool MainWindow::limitGoal() const
+{
+    return !goalCombo_->currentData().toBool();
+}
+
 void MainWindow::updateLimitStatus()
 {
     if (!media_ || !estBps_) {
@@ -1593,7 +1604,7 @@ void MainWindow::onFinished(int code, QProcess::ExitStatus status)
                                   fmtTime(encodeClock_.elapsed() / 1000.0));
     if (job_ == Job::Copy) {
         showOutcome(Outcome::Done, what, "Saved without re-encoding");
-    } else if (size > limitSpin_->value() * MB) {
+    } else if (limitGoal() && size > limitSpin_->value() * MB) {
         const bool quality = rateMode() == RateMode::Quality;
         showOutcome(Outcome::OverLimit,
                     what + QString("<br>It is over the %1 MB limit: use “%2” or lower the %3 a bit and try again.")

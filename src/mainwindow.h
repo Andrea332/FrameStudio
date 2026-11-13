@@ -101,6 +101,7 @@ private:
     double estimatedBytes() const;
     void onEstimateDone(double bps, bool exact);
     void onEstimateFailed(const QString &message);
+    bool limitGoal() const;
     void updateLimitStatus();
 
     // fit to limit (bestAllowed: don't go above this quality, e.g. no visible loss)
@@ -236,6 +237,7 @@ private:
     QComboBox *speedCombo_;
     QComboBox *keyintCombo_;
     QGroupBox *autoBox_;
+    QWidget *limitRow_;
     QComboBox *goalCombo_;
     QCheckBox *allowCodecCheck_;
     QPushButton *analyzeBtn_;
