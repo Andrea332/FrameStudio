@@ -99,7 +99,25 @@ jobs:
 
       # verbose: the log shows which encoders this machine has and how accurate the estimates were
       - name: Test
+        if: runner.os != 'macOS'
         run: ctest --test-dir build --output-on-failure --verbose
+
+      # On the macOS machine (a virtual Mac) the VideoToolbox encodes that survivesClosingWhileBusy kills halfway
+      # sometimes never end, and CTest waited for them (it reads the test's output until whatever holds it has
+      # ended) until its 1-hour timeout, although every test had passed. So the test program writes to a file
+      # here, the step waits only for it, and the FFmpeg processes left behind are killed.
+      - name: Test (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cd build
+          set +e
+          QT_QPA_PLATFORM=offscreen ./tst_video_compressor -o test-results.txt,txt -o -,txt > test-output.txt 2>&1
+          status=$?
+          pkill -9 -f "$PWD/ffmpeg/" || true
+          grep -v propagateSizeHints test-output.txt
+          echo "Exit code: $status"
+          exit $status
 
       - name: Test results
         if: failure()
