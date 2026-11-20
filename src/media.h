@@ -2,6 +2,8 @@
 
 #include <QString>
 
+class QProcess;
+
 #include <optional>
 
 struct MediaInfo {
@@ -22,6 +24,10 @@ struct MediaInfo {
 
 // Prefers the FFmpeg bundled with the app (ffmpeg/ folder next to the executable), otherwise uses PATH.
 QString findTool(const QString &name);
+
+// For work in the background (thumbnails, estimates, previews): the process runs below the priority of the app
+// and of other programs, so that the computer stays responsive while it decodes, e.g., a 4K video.
+void runInBackground(QProcess *proc);
 
 // Reads duration, dimensions, fps and audio presence with ffprobe. On failure returns nothing and sets *error.
 std::optional<MediaInfo> probe(const QString &ffprobe, const QString &path, QString *error);

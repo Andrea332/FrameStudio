@@ -73,6 +73,7 @@ private slots:
     void fitsBitrateToLimit();
     void analyzesAndSetsTheBest();
     void showsTheOutcomeClearly();
+    void asksBeforeReplacingAFile();
     void scrollsOnShortScreens();
     void notifiesAboutUpdates();
     void keepsPortableSettingsNextToTheApp();
@@ -871,6 +872,64 @@ void TestVideoCompressor::showsTheOutcomeClearly()
     QVERIFY(!w.outcomeBar_->isVisible());   // hidden while the next one runs
     w.cancel();
     QVERIFY(!w.outcomeBar_->isVisible());
+}
+
+// Exporting over an existing file asks first; a new name, or one the Save as dialog already asked about, doesn't.
+void TestVideoCompressor::asksBeforeReplacingAFile()
+{
+    MainWindow &w = *win_;
+    w.setInput(path("input.mp4"));
+    select(w.formatCombo_, "mp4");
+    select(w.vcodecCombo_, "h264");
+    select(w.accelCombo_, "off");
+    const QString out = path("existing.mp4");
+    QFile file(out);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("keep me");
+    file.close();
+    const auto ask = w.askQuestion;
+    bool answer = false;
+    QStringList asked;
+    QString lastText;
+    w.askQuestion = [&](const QString &title, const QString &text) {
+        asked << title;
+        lastText = text;
+        return answer;
+    };
+
+    w.outEdit_->setText(out);
+    w.start();                                    // "no": nothing happens
+    QCOMPARE(asked, QStringList{"Replace the file?"});
+    QVERIFY2(lastText.contains("existing.mp4"), qPrintable(lastText));
+    QVERIFY(!w.encoding_);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), QByteArray("keep me"));
+    file.close();
+
+    answer = true;                                // "yes": replaced
+    w.start();
+    QCOMPARE(asked.size(), 2);
+    QVERIFY(QTest::qWaitFor([&] { return !w.encoding_; }, 120000));
+    QVERIFY(QFileInfo(out).size() > 1000);
+
+    asked.clear();                                // already asked by the Save as dialog: not again, and only once
+    w.confirmedOutput_ = out;
+    w.start();
+    QVERIFY(QTest::qWaitFor([&] { return !w.encoding_; }, 120000));
+    QVERIFY(asked.isEmpty());
+    answer = false;
+    w.start();
+    QCOMPARE(asked, QStringList{"Replace the file?"});
+
+    asked.clear();                                // a new file: no question
+    const QString fresh = path("fresh.mp4");
+    QFile::remove(fresh);
+    w.outEdit_->setText(fresh);
+    w.start();
+    QVERIFY(QTest::qWaitFor([&] { return !w.encoding_; }, 120000));
+    QVERIFY(asked.isEmpty());
+    QVERIFY(QFileInfo::exists(fresh));
+    w.askQuestion = ask;
 }
 
 // The window can be shorter than what's in it (laptop screens): then it scrolls, nothing is squeezed, and

@@ -170,6 +170,7 @@ It keeps its settings in `FrameStudio.ini` in that folder instead of in
   button flashes (on macOS the Dock icon bounces). While the size is being
   estimated, a wheel turns next to it.
 - Drag and drop a video onto the window, progress bar and cancel button.
+  Exporting over a file that already exists asks first.
 - **FFmpeg included**: the packaged app needs nothing else installed.
 
 ## Automatic settings

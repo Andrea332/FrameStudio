@@ -47,6 +47,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <utility>
 #include <cmath>
 
 namespace {
@@ -732,6 +733,7 @@ void MainWindow::loadPreview()
     const double at = std::min(media_->duration * 0.1, 10.0);
     const int gen = previewGen_;
     auto *proc = new QProcess(this);
+    runInBackground(proc);
     previewProc_ = proc;
     connect(proc, &QProcess::finished, this, [this, proc, gen, dpr, at](int code, QProcess::ExitStatus status) {
         proc->deleteLater();
@@ -1368,6 +1370,7 @@ void MainWindow::pickOutput()
     if (!path.endsWith("." + f.ext, Qt::CaseInsensitive))
         path += "." + f.ext;
     outEdit_->setText(QDir::toNativeSeparators(path));
+    confirmedOutput_ = outEdit_->text();   // the dialog already asked whether to replace it
 }
 
 void MainWindow::openFolder()
@@ -1398,6 +1401,13 @@ void MainWindow::start()
         showMessage(QMessageBox::Warning, "Error", "The output file must be different from the input file.");
         return;
     }
+    // an existing file is replaced only if the user says so (once, when the Save as dialog already asked)
+    const bool confirmed = samePath(out, std::exchange(confirmedOutput_, QString()));
+    if (QFileInfo::exists(out) && !confirmed
+        && !askQuestion("Replace the file?", QString("“%1” already exists in %2.\n\nReplace it with the export?")
+                                                 .arg(QFileInfo(out).fileName(),
+                                                      QDir::toNativeSeparators(QFileInfo(out).absolutePath()))))
+        return;
 
     resumeEstimate_ = spinner_->isSpinning();   // estimated again when the compression ends
     estTimer_->stop();

@@ -12,6 +12,29 @@
 
 #include <cmath>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/resource.h>
+#endif
+
+void runInBackground(QProcess *proc)
+{
+#ifdef Q_OS_WIN
+    proc->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {
+        args->flags |= BELOW_NORMAL_PRIORITY_CLASS;
+    });
+#else
+    proc->setChildProcessModifier([] { (void)setpriority(PRIO_PROCESS, 0, 10); });
+#endif
+}
+
 QString findTool(const QString &name)
 {
 #ifdef Q_OS_WIN

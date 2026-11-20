@@ -718,6 +718,7 @@ void Editor::updateActions()
 void Editor::readKeyframes()
 {
     auto *proc = new QProcess(this);
+    runInBackground(proc);
     keyframeProc_ = proc;
     const int gen = gen_;
     connect(proc, &QProcess::finished, this, [this, proc, gen] {
@@ -812,6 +813,7 @@ void Editor::startThumbnail(double t, bool exact)
 {
     requestedThumbs_.insert(qint64(std::llround(t * 1000)));
     auto *proc = new QProcess(this);
+    runInBackground(proc);
     thumbProcs_ << proc;
     const int gen = gen_;
     connect(proc, &QProcess::finished, this, [this, proc, gen, t] {
@@ -825,6 +827,11 @@ void Editor::startThumbnail(double t, bool exact)
         nextThumbnail();
     });
     QStringList args{"-v", "error"};
+    // an exact frame may need all the frames since the keyframe before it: in a 4K recording with a keyframe
+    // every 8 s, 240 frames (8 s of CPU). The GPU decodes them with a tenth of that (FFmpeg falls back to the
+    // CPU if it can't); for small videos the CPU is quicker than setting the GPU up.
+    if (exact && media_->width * media_->height >= 1280 * 720)
+        args << "-hwaccel" << "auto";
     if (exact)   // half a frame before: rounded to milliseconds, t itself may fall after the frame and give the next one
         args << "-ss" << QString::number(std::max(0.0, t - 0.5 / std::max(1.0, media_->fps)), 'f', 3);
     else   // just after the keyframe: the seek lands on it

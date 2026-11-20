@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21...3.31)
 
 # FrameStudio was called Video Compressor up to version 2.4
-project(FrameStudio VERSION 3.0.0 DESCRIPTION "Edit and export videos, with a preview of the final size" LANGUAGES CXX)
+project(FrameStudio VERSION 3.0.1 DESCRIPTION "Edit and export videos, with a preview of the final size" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -1,5 +1,7 @@
 #include "sizeestimator.h"
 
+#include "media.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
@@ -65,6 +67,7 @@ void SizeEstimator::runNext()
     const Job job = queue_.takeFirst();
     const int gen = gen_;
     auto *proc = new QProcess(this);
+    runInBackground(proc);
     proc_ = proc;
     connect(proc, &QProcess::finished, this, [this, gen, proc, job](int code, QProcess::ExitStatus status) {
         onFinished(gen, proc, job, status == QProcess::NormalExit && code == 0);

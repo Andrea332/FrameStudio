@@ -188,6 +188,7 @@ private:
     QProcess *previewProc_ = nullptr;   // extracts the preview frame of the source video
     int previewGen_ = 0;                // discards frames of videos that are no longer loaded
     QString currentOutput_;
+    QString confirmedOutput_;             // chosen in the Save as dialog, which asked whether to replace it
     Job job_ = Job::Export;
     double jobDuration_ = 0;              // of the file being written, for the progress
     std::unique_ptr<QTemporaryDir> copyDir_;   // the list of pieces for the copy without re-encoding
