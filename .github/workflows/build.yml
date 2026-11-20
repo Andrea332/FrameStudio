@@ -102,19 +102,35 @@ jobs:
         if: runner.os != 'macOS'
         run: ctest --test-dir build --output-on-failure --verbose
 
-      # On the macOS machine (a virtual Mac) the VideoToolbox encodes that survivesClosingWhileBusy kills halfway
-      # sometimes never end, and CTest waited for them (it reads the test's output until whatever holds it has
-      # ended) until its 1-hour timeout, although every test had passed. So the test program writes to a file
-      # here, the step waits only for it, and the FFmpeg processes left behind are killed.
+      # On the macOS machine (a virtual Mac) the test program sometimes couldn't quit after all the tests had
+      # passed (a thread stuck in Qt Multimedia's VideoToolbox decoding), and the VideoToolbox encodes that
+      # survivesClosingWhileBusy kills halfway sometimes never end: the step then waited until the 1-hour
+      # timeout. Here the player decodes on the CPU (the VideoToolbox encoders are still tested), the output goes
+      # to a file, and once the tests have finished the program gets a minute to quit, then it is killed and the
+      # totals decide.
       - name: Test (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          cd build
           set +e
-          QT_QPA_PLATFORM=offscreen ./tst_video_compressor -o test-results.txt,txt -o -,txt > test-output.txt 2>&1
-          status=$?
-          pkill -9 -f "$PWD/ffmpeg/" || true
+          cd build
+          export QT_QPA_PLATFORM=offscreen QT_FFMPEG_DECODING_HW_DEVICE_TYPES=
+          ./tst_video_compressor -o test-results.txt,txt -o -,txt < /dev/null > test-output.txt 2>&1 &
+          pid=$!
+          while kill -0 $pid 2>/dev/null && ! grep -q "Finished testing" test-output.txt && [ $SECONDS -lt 2400 ]; do
+            sleep 5
+          done
+          for i in $(seq 1 12); do kill -0 $pid 2>/dev/null || break; sleep 5; done
+          if kill -0 $pid 2>/dev/null; then
+            kill -9 $pid
+            grep -Eq "^Totals: [0-9]+ passed, 0 failed" test-output.txt
+            status=$?
+            echo "The test program didn't quit (after the tests, or 40 minutes): killed"
+          else
+            wait $pid
+            status=$?
+          fi
+          pkill -9 -f "$PWD/ffmpeg/"
           grep -v propagateSizeHints test-output.txt
           echo "Exit code: $status"
           exit $status
