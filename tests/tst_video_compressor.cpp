@@ -48,6 +48,8 @@
 #include <QtEndian>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 
 class TestVideoCompressor : public QObject
@@ -1555,7 +1557,17 @@ int main(int argc, char *argv[])
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDir.path());
     QSettings().setValue("updates/autoCheck", false);
     TestVideoCompressor test;
-    return QTest::qExec(&test, argc, argv);
+    const int result = QTest::qExec(&test, argc, argv);
+#ifdef Q_OS_MACOS
+    // On the macOS CI machine (a virtual Mac) the program sometimes never ended after all the tests had passed:
+    // destroying the window, whose player had opened videos, hangs there in the teardown of Qt Multimedia's
+    // hardware decoding. The results are written by now, so on CI it leaves without that teardown.
+    if (qEnvironmentVariableIsSet("GITHUB_ACTIONS")) {
+        std::fflush(nullptr);
+        std::_Exit(result);
+    }
+#endif
+    return result;
 }
 
 #include "tst_video_compressor.moc"
